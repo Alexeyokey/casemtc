@@ -147,14 +147,17 @@ class SubmissionCommandTests(unittest.TestCase):
                 self.assertEqual(reader.fieldnames, ["id", "answer"])
                 self.assertEqual([row["id"] for row in reader], ["12", "03"])
 
-    def test_plain_invocation_requires_a_real_handler(self):
+    def test_plain_invocation_requires_platform_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ)
+            for name in ("LLM_BASE_URL", "OPENAI_BASE_URL", "BASE_URL"):
+                env.pop(name, None)
             result = subprocess.run(
-                [sys.executable, "-B", str(SCRIPT)], cwd=directory,
+                [sys.executable, "-B", str(SCRIPT)], cwd=directory, env=env,
                 capture_output=True, text=True, timeout=10,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Подключите ядро консультации", result.stderr)
+            self.assertIn("Проверьте конфигурацию API организаторов", result.stderr)
             self.assertFalse((Path(directory) / "submission.csv").exists())
 
 

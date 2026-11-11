@@ -5,6 +5,7 @@ import asyncio
 import csv
 import os
 import sys
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -91,6 +92,35 @@ async def demo_answer(_question: str) -> str:
     return "Синтетический ответ для проверки формата CSV."
 
 
+async def run_platform_submission(data_dir: Path) -> int:
+    from consultation import parse_csv_history
+    from knowledge_base import KnowledgeBase, KnowledgeBaseError
+    from organizer_api import APIConfig, ConfigurationError, OrganizerClient
+    from rag_consultation import RagConsultant, configured_top_k
+
+    started_at = time.monotonic()
+    try:
+        top_k = configured_top_k()
+    except ValueError as error:
+        raise SubmissionError(str(error)) from None
+    try:
+        config = APIConfig.from_env()
+    except ConfigurationError as error:
+        raise SubmissionError(f"Проверьте конфигурацию API организаторов. {error}.") from None
+    try:
+        knowledge = KnowledgeBase.from_zip(data_dir / "knowledge-base.zip")
+    except KnowledgeBaseError as error:
+        raise SubmissionError(str(error)) from None
+
+    async with OrganizerClient(config, deadline=started_at + config.run_budget_s) as client:
+        consultant = RagConsultant(knowledge, client.chat, top_k=top_k)
+
+        async def answer_question(question: str) -> str:
+            return (await consultant.consult(parse_csv_history(question))).text
+
+        return await run_submission(data_dir, answer_question)
+
+
 def main(
     argv: Sequence[str] | None = None, *, answer_question: AnswerQuestion | None = None,
 ) -> int:
@@ -98,12 +128,10 @@ def main(
     parser.add_argument("--demo", action="store_true", help="Использовать синтетические ответы.")
     args = parser.parse_args(argv)
     handler = demo_answer if args.demo else answer_question
-    if handler is None:
-        parser.error("Подключите ядро консультации. Для проверки формата используйте --demo.")
-
     data_dir = Path(os.environ.get("DATA_DIR") or "data")
+    run = run_submission(data_dir, handler) if handler is not None else run_platform_submission(data_dir)
     try:
-        count = asyncio.run(run_submission(data_dir, handler))
+        count = asyncio.run(run)
     except SubmissionError as error:
         print(str(error), file=sys.stderr)
         return 1

@@ -1,6 +1,7 @@
 """Local browser adapter for the synthetic consultation demo."""
 
 import argparse
+import asyncio
 from contextlib import closing
 from html import escape
 import json
@@ -12,7 +13,7 @@ from uuid import uuid4
 from wsgiref.simple_server import make_server
 
 from consultation import Turn
-from examples.demo_consultation import consult
+from examples.demo_consultation import consult as demo_consult
 
 
 SCHEMA = """
@@ -91,7 +92,7 @@ def _lead(db, session_id):
     return db.execute("SELECT phone, summary FROM leads WHERE session_id = ?", (session_id,)).fetchone()
 
 
-def _chat(db, session_id, fields):
+def _chat(db, session_id, fields, consult):
     message = fields.get("message", "").strip()
     request_id = fields.get("request_id") or None
     if not message or len(message) > 4_000 or (request_id and len(request_id) > 64):
@@ -145,7 +146,11 @@ def _save_lead(db, session_id, fields):
     )
 
 
-def _page(content):
+def _page(content, synthetic):
+    banner = (
+        "Локальное демо на синтетических данных. Используйте тестовые контакты."
+        if synthetic else "Локальная проверка поиска по базе МТС. Используйте тестовые контакты."
+    )
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>EnergyTool — локальное демо</title>
@@ -164,14 +169,14 @@ button {{ color: white; background: #1b4286; cursor: pointer }}
 summary {{ cursor: pointer }}
 </style></head><body><main>
 <h1>Консультант EnergyTool</h1>
-<p>Локальное демо на синтетических данных. Используйте тестовые контакты.</p>
+<p>{banner}</p>
 {content}</main></body></html>"""
 
 
-def _render(db, session_id):
+def _render(db, session_id, synthetic):
     new = '<form method="post" action="/sessions"><button>Новый диалог</button></form>'
     if not session_id:
-        return _page(new)
+        return _page(new, synthetic)
     rows = _messages(db, session_id)
     lead = _lead(db, session_id)
     hidden = f'<input type="hidden" name="session_id" value="{escape(session_id)}">'
@@ -181,7 +186,7 @@ def _render(db, session_id):
         anchor = ' id="latest-reply"' if row["id"] == rows[-1]["id"] else ""
         sources = json.loads(row["evidence_ids"])
         details = (
-            f'<details><summary>Источники демо</summary>{escape(", ".join(sources))}</details>'
+            f'<details><summary>Источники ответа</summary>{escape(", ".join(sources))}</details>'
             if sources else ""
         )
         conversation.append(
@@ -203,11 +208,12 @@ def _render(db, session_id):
 <label for="message">Ваше сообщение</label>
 <textarea id="message" name="message" rows="2" maxlength="4000" required></textarea>
 <button>Отправить</button></form>"""
-    return _page(new + "".join(conversation) + contact + chat)
+    return _page(new + "".join(conversation) + contact + chat, synthetic)
 
 
-def create_app(db_path):
+def create_app(db_path, *, consult=demo_consult):
     """Create a WSGI app using a persistent SQLite file."""
+    synthetic = consult is demo_consult
     with closing(_connect(db_path)) as db:
         db.executescript(SCHEMA)
 
@@ -219,7 +225,7 @@ def create_app(db_path):
                     session_id = _fields(environ.get("QUERY_STRING", "")).get("session_id")
                     if session_id is not None:
                         _require_session(db, session_id)
-                    page = _render(db, session_id)
+                    page = _render(db, session_id, synthetic)
                 elif route in {("POST", "/sessions"), ("POST", "/chat"), ("POST", "/lead")}:
                     fields = _post_fields(environ)
                     db.execute("BEGIN IMMEDIATE")
@@ -230,7 +236,7 @@ def create_app(db_path):
                         session_id = fields.get("session_id")
                         _require_session(db, session_id)
                         if route == ("POST", "/chat"):
-                            _chat(db, session_id, fields)
+                            _chat(db, session_id, fields, consult)
                         else:
                             _save_lead(db, session_id, fields)
                     page = None
@@ -243,19 +249,48 @@ def create_app(db_path):
             status = "200 OK"
         except RequestError as exc:
             status = exc.status
-            page = _page(f'<p role="alert">{escape(str(exc))}</p><a href="/">Открыть демо</a>')
+            page = _page(f'<p role="alert">{escape(str(exc))}</p><a href="/">Открыть чат</a>', synthetic)
         start_response(status, [("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-store")])
         return [page.encode("utf-8")]
 
     return app
 
 
+def _api_consultation(archive):
+    from knowledge_base import KnowledgeBase
+    from organizer_api import APIConfig, OrganizerAPIError, OrganizerClient
+    from rag_consultation import RagConsultant, configured_top_k
+
+    config = APIConfig.from_env()
+    top_k = configured_top_k()
+    knowledge = KnowledgeBase.from_zip(archive)
+
+    async def answer(history):
+        async with OrganizerClient(config) as client:
+            return await RagConsultant(knowledge, client.chat, top_k=top_k).consult(history)
+
+    def consult(history):
+        try:
+            return asyncio.run(answer(history))
+        except OrganizerAPIError:
+            raise RequestError("503 Service Unavailable", "Сервис консультации временно недоступен.") from None
+
+    return consult
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True, help="Path to a local SQLite database")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--knowledge-base", type=Path, help="Архив базы МТС для режима с API организаторов")
     args = parser.parse_args()
-    with make_server("127.0.0.1", args.port, create_app(args.db)) as server:
+    consult = demo_consult
+    if args.knowledge_base:
+        try:
+            consult = _api_consultation(args.knowledge_base)
+        except ValueError as error:
+            parser.error(str(error))
+    with make_server("127.0.0.1", args.port, create_app(args.db, consult=consult)) as server:
         print(f"http://127.0.0.1:{server.server_port}/", flush=True)
         try:
             server.serve_forever()
