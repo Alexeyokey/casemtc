@@ -5,6 +5,7 @@ import asyncio
 from contextlib import closing
 from html import escape
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -219,6 +220,8 @@ def create_app(db_path, *, consult=demo_consult):
 
     def app(environ, start_response):
         route = (environ["REQUEST_METHOD"], environ["PATH_INFO"])
+        if route == ("GET", "/health"):
+            return _health(db_path, start_response)
         try:
             with closing(_connect(db_path)) as db, db:
                 if route == ("GET", "/"):
@@ -256,6 +259,18 @@ def create_app(db_path, *, consult=demo_consult):
     return app
 
 
+def _health(db_path, start_response):
+    database = Path(db_path).resolve().as_uri() + "?mode=ro"
+    try:
+        with closing(sqlite3.connect(database, uri=True)) as db:
+            db.execute("SELECT 1 FROM sessions LIMIT 1").fetchone()
+        status, body = "200 OK", b'{"status":"ok"}'
+    except sqlite3.Error:
+        status, body = "503 Service Unavailable", b'{"status":"unavailable"}'
+    start_response(status, [("Content-Type", "application/json"), ("Cache-Control", "no-store")])
+    return [body]
+
+
 def _api_consultation(archive):
     from knowledge_base import KnowledgeBase
     from organizer_api import APIConfig, OrganizerAPIError, OrganizerClient
@@ -281,8 +296,12 @@ def _api_consultation(archive):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True, help="Path to a local SQLite database")
+    parser.add_argument("--host", default="127.0.0.1", help="Адрес, на котором слушает веб-сервер")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--knowledge-base", type=Path, help="Архив базы МТС для режима с API организаторов")
+    parser.add_argument(
+        "--knowledge-base", type=Path, default=os.environ.get("ENERGYTOOL_KB_PATH") or None,
+        help="Архив базы МТС для режима с API организаторов",
+    )
     args = parser.parse_args()
     consult = demo_consult
     if args.knowledge_base:
@@ -290,8 +309,8 @@ def main():
             consult = _api_consultation(args.knowledge_base)
         except ValueError as error:
             parser.error(str(error))
-    with make_server("127.0.0.1", args.port, create_app(args.db, consult=consult)) as server:
-        print(f"http://127.0.0.1:{server.server_port}/", flush=True)
+    with make_server(args.host, args.port, create_app(args.db, consult=consult)) as server:
+        print(f"EnergyTool слушает http://{args.host}:{server.server_port}/", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

@@ -1,0 +1,17 @@
+**
+!Dockerfile
+!requirements.txt
+!requirements.lock
+!consultation.py
+!knowledge_base.py
+!organizer_api.py
+!rag_consultation.py
+!solution.py
+!examples/
+examples/**
+!examples/__init__.py
+!examples/demo_consultation.py
+!examples/demo_web.py
+!scripts/
+scripts/**
+!scripts/build_submission.py

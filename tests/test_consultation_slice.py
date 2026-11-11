@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import re
 import sqlite3
 import tempfile
@@ -106,6 +107,18 @@ class WebConsultationTests(unittest.TestCase):
 
     def offer_id(self, page):
         return re.search(r'name="offer_id" value="(\d+)"', self.request("GET", page)["body"])[1]
+
+    def test_health_reports_sqlite_readiness_without_creating_a_database(self):
+        ready = self.request("GET", "/health")
+        self.assertEqual(ready["status"], 200)
+        self.assertEqual(ready["headers"]["Content-Type"], "application/json")
+        self.assertEqual(json.loads(ready["body"]), {"status": "ok"})
+
+        self.db_path.unlink()
+        unavailable = self.request("GET", "/health")
+        self.assertEqual(unavailable["status"], 503)
+        self.assertEqual(json.loads(unavailable["body"]), {"status": "unavailable"})
+        self.assertFalse(self.db_path.exists())
 
     def test_web_persists_lead_and_preserves_isolated_consultations(self):
         session_id, page = self.start_session()

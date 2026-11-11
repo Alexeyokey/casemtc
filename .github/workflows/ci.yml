@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_PORT: "18080"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+
+      - name: Run tests
+        run: python -B -m unittest discover -s tests -v
+
+      - name: Check the packaged CSV entry point
+        run: |
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          python -B scripts/build_submission.py --output "$scratch/submission.zip"
+          python -m zipfile -e "$scratch/submission.zip" "$scratch/package"
+          mkdir "$scratch/data" "$scratch/run"
+          cat > "$scratch/data/questions.csv" <<'CSV'
+          id,question
+          001,"Первая строка
+          Вторая строка"
+          2,Другая запись
+          CSV
+          cd "$scratch/run"
+          DATA_DIR="$scratch/data" python -B "$scratch/package/solution.py" --demo
+          python - <<'PY'
+          import csv
+
+          with open("submission.csv", encoding="utf-8", newline="") as file:
+              reader = csv.DictReader(file)
+              assert reader.fieldnames == ["id", "answer"]
+              rows = list(reader)
+          assert [row["id"] for row in rows] == ["001", "2"]
+          assert all(row["answer"].strip() for row in rows)
+          PY
+
+      - name: Check the web demo and persistent storage
+        id: compose
+        run: |
+          base_url="http://127.0.0.1:$APP_PORT"
+          docker compose up --build --wait --wait-timeout 60
+          curl --fail --silent --show-error --max-time 5 "$base_url/health"
+          session_url=$(curl --fail --silent --show-error --max-time 5 --location \
+            --data '' --output /dev/null --write-out '%{url_effective}' "$base_url/sessions")
+          [[ "$session_url" == "$base_url/?session_id="* ]]
+          message='CI persistence check'
+          curl --fail --silent --show-error --max-time 5 --location --output /dev/null \
+            --data-urlencode "session_id=${session_url##*session_id=}" \
+            --data-urlencode "message=$message" "$base_url/chat"
+
+          docker compose down
+          docker compose up --wait --wait-timeout 60
+          curl --fail --silent --show-error --max-time 5 "$session_url" | grep -F "$message"
+
+      - name: Show Compose logs on failure
+        if: failure() && steps.compose.outcome == 'failure'
+        run: docker compose logs --no-color
+
+      - name: Remove Compose resources
+        if: always() && steps.compose.outcome != 'skipped'
+        run: docker compose down --volumes

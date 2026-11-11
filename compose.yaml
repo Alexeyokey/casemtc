@@ -1,0 +1,24 @@
+services:
+  web:
+    build: .
+    init: true
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - energytool-data:/var/lib/energytool
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/health', timeout=2).close()"
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  energytool-data:

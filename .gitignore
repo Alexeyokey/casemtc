@@ -9,5 +9,6 @@ __pycache__/
 htmlcov/
 data/
 artifacts/
+energytool-submission.zip
 *.log
 .DS_Store
