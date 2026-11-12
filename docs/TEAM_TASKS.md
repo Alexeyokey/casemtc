@@ -4,13 +4,13 @@
 
 ## Распределение
 
-26 инженерных задач, всего 62 SP. SP отражают предварительную относительную сложность. После первых PR переоцениваем объём и обновляем план.
+26 инженерных задач, всего 62 SP. Общие 7 SP по R1–R3 указаны у обоих ответственных и входят в итог один раз. SP отражают предварительную относительную сложность. После первых PR переоцениваем объём и обновляем план.
 
 | Участник | Зона ответственности | SP | Задачи |
 |---|---|---:|---|
-| Влад | Независимая проверка поиска, сравнение вариантов и ревью кода с другом в Claude | 7 | [R4](https://github.com/Alexeyokey/casemtc/issues/18), [R5](https://github.com/Alexeyokey/casemtc/issues/22), [R6](https://github.com/Alexeyokey/casemtc/issues/31) |
+| Влад | Обработка документов и поиск вместе с Алексеем, проверка качества, сравнение вариантов и ревью с другом в Claude | 7 + 7 совместно | [R1](https://github.com/Alexeyokey/casemtc/issues/3), [R2](https://github.com/Alexeyokey/casemtc/issues/7), [R3](https://github.com/Alexeyokey/casemtc/issues/11), [R4](https://github.com/Alexeyokey/casemtc/issues/18), [R5](https://github.com/Alexeyokey/casemtc/issues/22), [R6](https://github.com/Alexeyokey/casemtc/issues/31) |
 | Максим | Состояние консультации, контекст, генерация, проверка фактов и диалоговое качество | 12 | [C1](https://github.com/Alexeyokey/casemtc/issues/6), [C2](https://github.com/Alexeyokey/casemtc/issues/10), [C3](https://github.com/Alexeyokey/casemtc/issues/14), [C4](https://github.com/Alexeyokey/casemtc/issues/19), [C5](https://github.com/Alexeyokey/casemtc/issues/23) |
-| Алексей | Обработка документов, реализация поиска, API, CSV, ZIP, Docker/CI и комплект сдачи | 19 | [R1](https://github.com/Alexeyokey/casemtc/issues/3), [R2](https://github.com/Alexeyokey/casemtc/issues/7), [R3](https://github.com/Alexeyokey/casemtc/issues/11), [I1](https://github.com/Alexeyokey/casemtc/issues/4), [I2](https://github.com/Alexeyokey/casemtc/issues/9), [I3](https://github.com/Alexeyokey/casemtc/issues/16), [I4](https://github.com/Alexeyokey/casemtc/issues/17), [I5](https://github.com/Alexeyokey/casemtc/issues/26) |
+| Алексей | Реализация обработки документов и поиска вместе с Владом, API, CSV, ZIP, Docker/CI и комплект сдачи | 12 + 7 совместно | [R1](https://github.com/Alexeyokey/casemtc/issues/3), [R2](https://github.com/Alexeyokey/casemtc/issues/7), [R3](https://github.com/Alexeyokey/casemtc/issues/11), [I1](https://github.com/Alexeyokey/casemtc/issues/4), [I2](https://github.com/Alexeyokey/casemtc/issues/9), [I3](https://github.com/Alexeyokey/casemtc/issues/16), [I4](https://github.com/Alexeyokey/casemtc/issues/17), [I5](https://github.com/Alexeyokey/casemtc/issues/26) |
 | Женя | Общие контракты, backend, сессии/архив, заявки, debug и сквозная приёмка | 12 | [S1](https://github.com/Alexeyokey/casemtc/issues/2), [S2](https://github.com/Alexeyokey/casemtc/issues/8), [S3](https://github.com/Alexeyokey/casemtc/issues/12), [S4](https://github.com/Alexeyokey/casemtc/issues/20), [S5](https://github.com/Alexeyokey/casemtc/issues/25) |
 | Катрина | Каркас web, живой чат, форма заявки, debug/архив UI, адаптивность и UI QA | 12 | [U1](https://github.com/Alexeyokey/casemtc/issues/5), [U2](https://github.com/Alexeyokey/casemtc/issues/13), [U3](https://github.com/Alexeyokey/casemtc/issues/15), [U4](https://github.com/Alexeyokey/casemtc/issues/21), [U5](https://github.com/Alexeyokey/casemtc/issues/24) |
 
@@ -19,15 +19,15 @@
 | ID | Ответственный | Приоритет | SP | Этап | Задача | Зависит от |
 |---|---|---|---:|---|---|---|
 | S1 | Женя | P0 | 2 | M0 | [#2 Общие контракты ядра, API и тестовые примеры](https://github.com/Alexeyokey/casemtc/issues/2) | Можно начинать |
-| R1 | Алексей | P0 | 2 | M0 | [#3 Инвентаризация корпуса и безопасный загрузчик БЗ](https://github.com/Alexeyokey/casemtc/issues/3) | Можно начинать |
+| R1 | Алексей и Влад | P0 | 2 | M0 | [#3 Инвентаризация корпуса и безопасный загрузчик БЗ](https://github.com/Alexeyokey/casemtc/issues/3) | Можно начинать |
 | I1 | Алексей | P0 | 2 | M0 | [#4 Клиент API организаторов и конфигурация окружения](https://github.com/Alexeyokey/casemtc/issues/4) | Можно начинать |
 | U1 | Катрина | P0 | 2 | M0 | [#5 Каркас веб-чата и работа на контрактных моках](https://github.com/Alexeyokey/casemtc/issues/5) | Можно начинать |
 | C1 | Максим | P0 | 2 | M0 | [#6 Состояние консультации и выбор следующего действия](https://github.com/Alexeyokey/casemtc/issues/6) | [S1](https://github.com/Alexeyokey/casemtc/issues/2) |
-| R2 | Алексей | P0 | 2 | M1 | [#7 Разбиение Markdown, таблиц и FAQ на доказательные фрагменты](https://github.com/Alexeyokey/casemtc/issues/7) | [R1](https://github.com/Alexeyokey/casemtc/issues/3), [S1](https://github.com/Alexeyokey/casemtc/issues/2) |
+| R2 | Алексей и Влад | P0 | 2 | M1 | [#7 Разбиение Markdown, таблиц и FAQ на доказательные фрагменты](https://github.com/Alexeyokey/casemtc/issues/7) | [R1](https://github.com/Alexeyokey/casemtc/issues/3), [S1](https://github.com/Alexeyokey/casemtc/issues/2) |
 | S2 | Женя | P0 | 3 | M1 | [#8 Сессии, полный архив и изоляция контекста](https://github.com/Alexeyokey/casemtc/issues/8) | [S1](https://github.com/Alexeyokey/casemtc/issues/2) |
 | I2 | Алексей | P0 | 3 | M1 | [#9 solution.py: чтение CSV, независимые диалоги и запись ответов](https://github.com/Alexeyokey/casemtc/issues/9) | [I1](https://github.com/Alexeyokey/casemtc/issues/4), [S1](https://github.com/Alexeyokey/casemtc/issues/2) |
 | C2 | Максим | P0 | 3 | M1 | [#10 Понимание реплики, контекст темы и запрос к поиску](https://github.com/Alexeyokey/casemtc/issues/10) | [C1](https://github.com/Alexeyokey/casemtc/issues/6), [I1](https://github.com/Alexeyokey/casemtc/issues/4) |
-| R3 | Алексей | P0 | 3 | M1 | [#11 Поиск по всей БЗ и подбор подтверждающих источников](https://github.com/Alexeyokey/casemtc/issues/11) | [R2](https://github.com/Alexeyokey/casemtc/issues/7) |
+| R3 | Алексей и Влад | P0 | 3 | M1 | [#11 Поиск по всей БЗ и подбор подтверждающих источников](https://github.com/Alexeyokey/casemtc/issues/11) | [R2](https://github.com/Alexeyokey/casemtc/issues/7) |
 | S3 | Женя | P0 | 3 | M1 | [#12 Сбор заявки, исправление контактов и резюме менеджеру](https://github.com/Alexeyokey/casemtc/issues/12) | [S2](https://github.com/Alexeyokey/casemtc/issues/8), [C1](https://github.com/Alexeyokey/casemtc/issues/6) |
 | U2 | Катрина | P0 | 3 | M1 | [#13 Подключение живого диалога, сброс и восстановление после ошибки](https://github.com/Alexeyokey/casemtc/issues/13) | [U1](https://github.com/Alexeyokey/casemtc/issues/5), [S1](https://github.com/Alexeyokey/casemtc/issues/2) |
 | C3 | Максим | P0 | 3 | M1 | [#14 Генерация консультации с источниками и продуктовой применимостью](https://github.com/Alexeyokey/casemtc/issues/14) | [C2](https://github.com/Alexeyokey/casemtc/issues/10), [R3](https://github.com/Alexeyokey/casemtc/issues/11) |
@@ -47,7 +47,7 @@
 
 ## Порядок работы
 
-1. На M0 Женя фиксирует контракты, Алексей исследует структуру данных и готовит клиент API, Катрина собирает интерфейс на тестовых ответах. Максим после первого контракта начинает работу над состоянием диалога.
+1. На M0 Женя фиксирует контракты, Алексей и Влад исследуют структуру данных, Алексей готовит клиент API, Катрина собирает интерфейс на тестовых ответах. Максим после первого контракта начинает работу над состоянием диалога.
 2. M1: получаем два потребителя одного ядра — CSV и web — и путь от вопроса до заявки. Соседние блоки сначала работают на контрактных fixtures.
 3. M2: качество поиска/ответов, архив/debug, ошибки, мобильный сценарий, реальный допустимый сабмит, пакет сдачи. P1 не подменяет обязательную приёмку P0.
 
@@ -57,7 +57,7 @@
 
 - Одно ядро консультации с явной историей; web и solution.py — адаптеры. Архив не является памятью нового диалога.
 - Полезная консультация доступна до контактов. Для заявки запрашиваем ФИО/телефон/компанию, допускаем сохранение с одним валидным телефоном при запросе обратной связи; без контакта остаются консультация и архив. Цена и обещания требуют подтверждения из выданной БЗ.
-- Максим отвечает за консультацию и проверку фактов. Алексей ведёт обработку документов, реализацию поиска, внешний API и платформенную упаковку. Влад проверяет выдачу и фиксирует замечания. Женя отвечает за HTTP и хранение, Катрина — за интерфейс.
+- Максим отвечает за консультацию и проверку фактов. Алексей и Влад отвечают за обработку документов и поиск. Алексей ведёт реализацию, внешний API и платформенную упаковку. Влад проверяет выдачу и фиксирует замечания. Женя отвечает за HTTP и хранение, Катрина — за интерфейс.
 - Генеративная модель и API-конфигурация читаются из окружения организаторов. Личная подписка Codex не является зависимостью проекта.
 - Архив БЗ не выполняется как код. Закрытые данные, фрагменты, индексы и ключи не коммитятся; тесты в Git используют синтетические документы.
 - Владельцы исправляют собственные интеграционные дефекты. Передача блока не означает передачу всех его багов Алексею.
