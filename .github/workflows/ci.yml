@@ -1,9 +1,10 @@
 name: CI
 
-on:
+"on":
   push:
-    branches: [main]
+    branches: [main, codex/s1-s5-integration]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
