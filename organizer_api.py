@@ -231,6 +231,7 @@ class OrganizerClient:
         self._closed = False
         self._http = httpx.AsyncClient(
             transport=transport, trust_env=False, follow_redirects=False,
+            headers={"Accept-Encoding": "identity"},
             timeout=httpx.Timeout(config.request_timeout_s, connect=min(5, config.request_timeout_s),
                                   pool=min(5, config.request_timeout_s)),
             limits=httpx.Limits(max_connections=config.max_workers,
@@ -386,7 +387,7 @@ class OrganizerClient:
         invalid_json = False
         try:
             encoded = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
-        except (TypeError, ValueError, UnicodeError):
+        except (TypeError, ValueError, UnicodeError, RecursionError):
             invalid_json = True
         if invalid_json:
             raise OrganizerAPIError("invalid_json_parameters", operation)
@@ -425,6 +426,11 @@ class OrganizerClient:
                                 if status == 401:
                                     raise AuthenticationError("authentication_failed", operation, status_code=status)
                                 if 200 <= status < 300:
+                                    encoding = response.headers.get("Content-Encoding", "").strip().lower()
+                                    if encoding not in ("", "identity"):
+                                        # HTTPX decodes a compressed chunk before yielding it to the size check.
+                                        raise OrganizerAPIError("unsupported_content_encoding", operation,
+                                                                status_code=status)
                                     raw = bytearray()
                                     async for chunk in response.aiter_bytes():
                                         if len(raw) + len(chunk) > self.config.max_response_bytes:

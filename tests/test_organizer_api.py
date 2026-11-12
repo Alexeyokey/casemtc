@@ -5,6 +5,7 @@ from collections import deque
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
+import gzip
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
@@ -143,6 +144,7 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         request = requests[0]
         self.assertEqual(str(request.url), "http://127.0.0.1:1/prefix/v1/chat/completions")
         self.assertEqual(request.headers["Authorization"], "Bearer "+KEY)
+        self.assertEqual(request.headers["Accept-Encoding"], "identity")
         body = json.loads(request.content)
         self.assertEqual(body["messages"], MESSAGES)
         self.assertEqual(body["model"], "synthetic-generator")
@@ -394,6 +396,20 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
             else:
                 self.fail("Expected JSON failure")
 
+    async def test_deeply_nested_request_is_rejected_before_network(self):
+        nested = PRIVATE
+        for _ in range(10_000):
+            nested = [nested]
+
+        def fail(_):
+            self.fail("Invalid request reached the transport")
+
+        async with OrganizerClient(config(), transport=httpx.MockTransport(fail)) as client:
+            with self.assertRaises(OrganizerAPIError) as error:
+                await client.chat(MESSAGES, extra_body={"nested": nested})
+            self.assertEqual(error.exception.code, "invalid_json_parameters")
+            self.assertIsNone(error.exception.__context__)
+
     async def test_deeply_nested_response_is_reported_as_invalid_json(self):
         content = b"[" * 10_000 + b"]" * 10_000
         transport = httpx.MockTransport(lambda _: httpx.Response(200, content=content))
@@ -410,6 +426,21 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
                 await client.chat(MESSAGES)
             self.assertEqual(error.exception.code, "response_too_large")
             self.assertEqual(error.exception.attempts, 1)
+
+    async def test_unsolicited_gzip_is_rejected_without_reading_the_body(self):
+        compressed = gzip.compress(b"x" * 65_536)
+        limit = 256
+        self.assertLess(len(compressed), limit)
+        response = httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(compressed))
+        async with OrganizerClient(config(max_response_bytes=limit),
+                                   transport=httpx.MockTransport(lambda _: response)) as client:
+            with self.assertRaises(OrganizerAPIError) as error:
+                await client.chat(MESSAGES)
+            self.assertEqual(error.exception.code, "unsupported_content_encoding")
+            self.assertEqual(error.exception.attempts, 1)
+            self.assertEqual(client.metrics[-1].error_code, "unsupported_content_encoding")
+        self.assertFalse(response.is_stream_consumed)
+        self.assertTrue(response.is_closed)
 
     async def test_absolute_call_deadline_cancels_active_request(self):
         cancelled = asyncio.Event()
