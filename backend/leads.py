@@ -4,13 +4,15 @@
 * сохранить заявку можно только с валидным телефоном; ФИО/компания/регион
   предлагаем, но не требуем и никогда не подставляем вымышленные;
 * без телефона — черновик + полная история, консультация продолжается;
-* «сохранена» означает только запись в БД и файл заявки, без CRM/почты;
-* повтор сохранения не создаёт дубль (одна заявка на сессию + idempotency_key).
+* сохранённая ревизия меняется только по явному подтверждению её черновика;
+* БД хранит заявку и ключ повтора, из сохранённой ревизии строится Markdown.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Optional
 
 from core.contracts import ClientContext, ContactInfo, ContactStatus, LeadDraft, LeadSummary
@@ -65,89 +67,130 @@ class LeadService:
                 ("lead_" + uuid.uuid4().hex[:16], session_id, "draft", ContactInfo().model_dump_json(), ts, ts),
             )
 
-    # ------------------------------------------------------------ engine sync
-    def sync_from_engine(self, conn, session_id: str, ctx: ClientContext, draft: Optional[LeadDraft]) -> ClientContext:
-        """Вызывается внутри транзакции хода. Нормализует контакты из ответа
-        engine и обновляет черновик. Возвращает очищенный контекст."""
+    def _update_draft(self, conn, session_id: str, ctx: ClientContext, summary: Optional[LeadSummary]) -> None:
+        self._ensure_row(conn, session_id)
+        row = self._row(session_id)
+        summary_json = summary.model_dump_json() if summary else row["draft_summary_json"]
+        if ctx.contact_status == ContactStatus.refused:
+            summary_json = None
+        conn.execute("UPDATE leads SET draft_summary_json=?, updated_at=? WHERE session_id=?",
+                     (summary_json, now_iso(), session_id))
+        if row["status"] == "draft":
+            conn.execute("UPDATE leads SET contact_json=?, callback_requested=?, summary_json=? WHERE session_id=?",
+                         (ctx.contact.model_dump_json(), int(ctx.callback_requested), summary_json, session_id))
+
+    @staticmethod
+    def _contact_state(ctx: ClientContext) -> tuple[ContactInfo, ContactStatus, bool]:
+        return ctx.contact, ctx.contact_status, ctx.callback_requested
+
+    def sync_from_engine(
+        self, conn, session_id: str, ctx: ClientContext, draft: Optional[LeadDraft], *,
+        started_ctx: Optional[ClientContext] = None,
+    ) -> ClientContext:
+        """Merge the completed turn without overriding a newer contact form or refusal."""
+        current = self._ctx(session_id)
         ctx = ctx.model_copy(deep=True)
-        source = draft.contact if draft else ctx.contact
-        merged = self._sanitize_contact(
-            ContactInfo(
+        if started_ctx and self._contact_state(started_ctx) != self._contact_state(current):
+            ctx.contact, ctx.contact_status, ctx.callback_requested = self._contact_state(current)
+            summary = None
+        else:
+            source = draft.contact if draft else ctx.contact
+            ctx.contact = self._sanitize_contact(ContactInfo(
                 full_name=source.full_name or ctx.contact.full_name,
                 phone=source.phone or ctx.contact.phone,
                 company=source.company or ctx.contact.company,
                 region=source.region or ctx.contact.region,
-            )
-        )
-        ctx.contact = merged
-        if draft and draft.callback_requested:
-            ctx.callback_requested = True
-        if ctx.contact_status != ContactStatus.refused:
-            if merged.phone:
+            ))
+            if draft and draft.callback_requested:
+                ctx.callback_requested = True
+            if ctx.contact_status == ContactStatus.refused:
+                ctx.contact = ContactInfo()
+                ctx.callback_requested = False
+            elif ctx.contact.phone:
                 ctx.contact_status = ContactStatus.phone_valid
-            elif any([merged.full_name, merged.company, merged.region]):
+            elif any(ctx.contact.model_dump().values()):
                 ctx.contact_status = ContactStatus.partial
+            summary = draft.summary if draft else None
 
-        need_row = bool(draft) or ctx.callback_requested or any(merged.model_dump().values())
-        if need_row:
-            self._ensure_row(conn, session_id)
-            summary = draft.summary if draft and draft.summary else None
-            row = conn.execute("SELECT summary_json FROM leads WHERE session_id=?", (session_id,)).fetchone()
-            summary_json = summary.model_dump_json() if summary else row["summary_json"]
-            conn.execute(
-                "UPDATE leads SET contact_json=?, callback_requested=?, summary_json=?, updated_at=? "
-                "WHERE session_id=?",
-                (merged.model_dump_json(), int(ctx.callback_requested), summary_json, now_iso(), session_id),
-            )
+        if draft or ctx.callback_requested or any(ctx.contact.model_dump().values()) or self._row(session_id):
+            self._update_draft(conn, session_id, ctx, summary)
         return ctx
+
+    def _load_draft(self, session_id: str):
+        row = self.db.one(
+            "SELECT l.*, s.client_context_json, "
+            "(SELECT content FROM messages WHERE session_id=s.id AND role='user' AND in_context=1 "
+            "ORDER BY seq DESC LIMIT 1) AS last_user FROM sessions s "
+            "LEFT JOIN leads l ON l.session_id=s.id WHERE s.id=?",
+            (session_id,),
+        )
+        ctx = ClientContext.model_validate(loads(row["client_context_json"]))
+        return row, ctx
+
+    @staticmethod
+    def _missing_fields(contact: ContactInfo) -> list[str]:
+        missing = [label for field, label in OPTIONAL_FIELDS.items() if not getattr(contact, field)]
+        return missing if contact.phone else ["Телефон", *missing]
+
+    def _draft_view(self, session_id: str, row, ctx: ClientContext) -> LeadView:
+        refused = ctx.contact_status == ContactStatus.refused
+        has_draft = bool(row["id"] or ctx.callback_requested or any(ctx.contact.model_dump().values()))
+        summary = None
+        if row["draft_summary_json"]:
+            summary = LeadSummary.model_validate_json(row["draft_summary_json"])
+        elif has_draft and not refused:
+            summary = self.fallback_summary(ctx, row["last_user"])
+
+        offer_id = None
+        if refused:
+            status = "draft" if has_draft else "none"
+            text = "Вы отказались оставлять контакты. Консультацию можно продолжать."
+        elif ctx.contact.phone:
+            status = "ready"
+            text = "Проверьте контакты и резюме перед сохранением заявки."
+            snapshot = dumps([session_id, ctx.contact.model_dump(), summary.model_dump(), ctx.callback_requested])
+            offer_id = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()
+        elif has_draft:
+            status = "draft"
+            text = ("Заявка не сохранена: для связи нужен телефон. Консультацию можно продолжать, "
+                    "история диалога сохраняется.")
+        else:
+            status = "none"
+            text = "Заявка ещё не начата."
+        return LeadView(lead_id=row["id"], session_id=session_id, status=status, contact=ctx.contact,
+                        contact_refused=refused, callback_requested=ctx.callback_requested,
+                        missing_fields=self._missing_fields(ctx.contact), summary=summary, offer_id=offer_id,
+                        revision=row["revision"] or 0, saved_at=row["saved_at"], status_text=text)
+
+    def _saved_view(self, row) -> LeadView:
+        contact = ContactInfo.model_validate_json(row["contact_json"])
+        summary = LeadSummary.model_validate_json(row["summary_json"])
+        return LeadView(lead_id=row["id"], session_id=row["session_id"], status="saved", contact=contact,
+                        callback_requested=bool(row["callback_requested"]), missing_fields=self._missing_fields(contact),
+                        summary=summary, revision=row["revision"], saved_at=row["saved_at"],
+                        status_text="Заявка сохранена в системе. Отправка в CRM или на почту не подключена.")
+
+    @staticmethod
+    def _matches_saved(row, draft: LeadView) -> bool:
+        return (row["status"] == "saved" and row["contact_json"] == draft.contact.model_dump_json()
+                and draft.summary is not None and row["summary_json"] == draft.summary.model_dump_json()
+                and bool(row["callback_requested"]) == draft.callback_requested)
 
     # ------------------------------------------------------------ API ops
     def view(self, session_id: str) -> LeadView:
-        ctx = self._ctx(session_id)
-        row = self._row(session_id)
-        refused = ctx.contact_status == ContactStatus.refused
-        contact = ctx.contact
-        summary = None
-        if row:
-            summary = LeadSummary.model_validate(loads(row["summary_json"])) if row["summary_json"] else None
-            if row["status"] == "saved":
-                contact = ContactInfo.model_validate(loads(row["contact_json"]))
-        if summary is None and row:
-            summary = self.fallback_summary(session_id, ctx)
-        missing = [label for f, label in OPTIONAL_FIELDS.items() if not getattr(contact, f)]
-        if not contact.phone:
-            missing.insert(0, "Телефон")
+        row, ctx = self._load_draft(session_id)
+        draft = self._draft_view(session_id, row, ctx)
+        if row["status"] == "saved" and (draft.contact_refused or self._matches_saved(row, draft)):
+            return self._saved_view(row).model_copy(
+                update={"offer_id": draft.offer_id, "contact_refused": draft.contact_refused},
+            )
+        return draft
 
-        if row and row["status"] == "saved":
-            status = "saved"
-            text = ("Заявка сохранена в системе. Менеджер увидит её в списке заявок. "
-                    "Отправка в CRM или на почту не подключена.")
-        elif contact.phone:
-            status = "ready"
-            text = "Данных достаточно: проверьте контакты и подтвердите сохранение заявки."
-        elif row or ctx.callback_requested:
-            status = "draft"
-            text = ("Заявка не сохранена: для связи нужен телефон. Консультацию можно продолжать, "
-                    "история диалога сохраняется.") if not refused else (
-                    "Вы отказались оставлять контакты — заявка не создана, менеджер не сможет связаться. "
-                    "Консультацию можно продолжать, история сохраняется.")
-        else:
-            status = "none"
-            text = ("Вы отказались оставлять контакты. Консультацию можно продолжать."
-                    if refused else "Заявка ещё не начата.")
-        return LeadView(
-            lead_id=row["id"] if row else None,
-            session_id=session_id,
-            status=status,
-            contact=contact,
-            contact_refused=refused,
-            callback_requested=ctx.callback_requested,
-            missing_fields=missing,
-            summary=summary,
-            revision=row["revision"] if row else 0,
-            saved_at=row["saved_at"] if row else None,
-            status_text=text,
-        )
+    def saved_view(self, session_id: str) -> LeadView:
+        row = self._row(session_id)
+        if not row or row["status"] != "saved":
+            raise ApiError(404, "lead_not_found", "Сохранённая заявка не найдена")
+        return self._saved_view(row)
 
     def update_contacts(self, session_id: str, upd: ContactsUpdate) -> LeadView:
         fields = upd.model_dump(exclude_unset=True)
@@ -173,66 +216,75 @@ class LeadService:
             elif ctx.contact_status != ContactStatus.refused:
                 ctx.contact_status = ContactStatus.requested
             self._save_ctx(conn, session_id, ctx)
-            self._ensure_row(conn, session_id)
-            row = conn.execute("SELECT status FROM leads WHERE session_id=?", (session_id,)).fetchone()
-            if row["status"] != "saved":
-                conn.execute(
-                    "UPDATE leads SET contact_json=?, callback_requested=?, updated_at=? WHERE session_id=?",
-                    (ctx.contact.model_dump_json(), int(ctx.callback_requested), now_iso(), session_id),
-                )
-        return self.view(session_id)
+            self._update_draft(conn, session_id, ctx, None)
+            return self.view(session_id)
 
     def refuse(self, session_id: str) -> LeadView:
         with self.db.tx() as conn:
             ctx = self._ctx(session_id)
+            ctx.contact = ContactInfo()
             ctx.contact_status = ContactStatus.refused
             ctx.callback_requested = False
             self._save_ctx(conn, session_id, ctx)
-        return self.view(session_id)
+            if self._row(session_id):
+                self._update_draft(conn, session_id, ctx, None)
+            return self.view(session_id)
 
-    def save(self, session_id: str, idempotency_key: str) -> LeadView:
-        ctx = self._ctx(session_id)
-        row = self._row(session_id)
-        if row and row["idempotency_key"] == idempotency_key and row["status"] == "saved":
-            return self.view(session_id)  # повтор того же запроса
-        if not ctx.contact.phone:
+    def save(self, session_id: str, idempotency_key: str, offer_id: str) -> LeadView:
+        with self.db.tx() as conn:
+            existing = conn.execute(
+                "SELECT offer_id, response_json FROM lead_save_requests WHERE session_id=? AND idempotency_key=?",
+                (session_id, idempotency_key),
+            ).fetchone()
+            if existing:
+                if existing["offer_id"] != offer_id:
+                    raise ApiError(409, "lead_request_conflict", "Этот ключ уже использован для другой версии заявки.")
+                response = LeadView.model_validate_json(existing["response_json"])
+            else:
+                response = self._confirm_draft(conn, session_id, idempotency_key, offer_id)
+
+        # Always regenerate from the latest confirmed row. A retry can repair a
+        # failed file write without replacing the lead or incrementing its revision.
+        try:
+            with self.db.tx():
+                self._write_file(self.saved_view(session_id))
+        except OSError as error:
+            raise ApiError(503, "lead_file_unavailable",
+                           "Заявка записана, но файл недоступен. Повторите сохранение.", retryable=True) from error
+        return response
+
+    def _confirm_draft(self, conn, session_id: str, idempotency_key: str, offer_id: str) -> LeadView:
+        row, ctx = self._load_draft(session_id)
+        draft = self._draft_view(session_id, row, ctx)
+        if draft.contact_refused:
+            raise ApiError(409, "contacts_refused", "Клиент отказался от контактов. Заявка не сохранена.")
+        if not draft.contact.phone:
             raise ApiError(422, "phone_required",
                            "Чтобы сохранить заявку, укажите телефон для связи. "
                            "Без телефона консультация продолжится, а история сохранится.")
-        summary = None
-        if row and row["summary_json"]:
-            summary = LeadSummary.model_validate(loads(row["summary_json"]))
-        summary = summary or self.fallback_summary(session_id, ctx)
-        contact_json = ctx.contact.model_dump_json()
-        with self.db.tx() as conn:
+        if draft.offer_id != offer_id:
+            raise ApiError(409, "stale_offer", "Контакты или резюме изменились. Проверьте актуальную заявку.")
+        if not self._matches_saved(row, draft):
             self._ensure_row(conn, session_id)
-            cur = conn.execute("SELECT * FROM leads WHERE session_id=?", (session_id,)).fetchone()
-            unchanged = (cur["status"] == "saved" and cur["contact_json"] == contact_json
-                         and cur["summary_json"] == summary.model_dump_json())
-            if unchanged:
-                conn.execute("UPDATE leads SET idempotency_key=? WHERE session_id=?", (idempotency_key, session_id))
-            else:
-                ts = now_iso()
-                conn.execute(
-                    "UPDATE leads SET status='saved', contact_json=?, summary_json=?, callback_requested=?, "
-                    "revision=revision+1, idempotency_key=?, updated_at=?, saved_at=? WHERE session_id=?",
-                    (contact_json, summary.model_dump_json(), int(ctx.callback_requested),
-                     idempotency_key, ts, ts, session_id),
-                )
-        view = self.view(session_id)
-        self._write_file(view)
-        return view
+            ts = now_iso()
+            conn.execute(
+                "UPDATE leads SET status='saved', contact_json=?, summary_json=?, "
+                "callback_requested=?, revision=revision+1, idempotency_key=?, updated_at=?, saved_at=? "
+                "WHERE session_id=?",
+                (draft.contact.model_dump_json(), draft.summary.model_dump_json(), int(draft.callback_requested),
+                 idempotency_key, ts, ts, session_id),
+            )
+        response = self.saved_view(session_id).model_copy(update={"offer_id": offer_id})
+        conn.execute("INSERT INTO lead_save_requests VALUES (?,?,?,?)",
+                     (session_id, idempotency_key, offer_id, response.model_dump_json()))
+        return response
 
     # ------------------------------------------------------------ summary/render
-    def fallback_summary(self, session_id: str, ctx: ClientContext) -> LeadSummary:
+    @staticmethod
+    def fallback_summary(ctx: ClientContext, last_user: Optional[str]) -> LeadSummary:
         """Резюме только из сказанного клиентом и сохранённого контекста.
         Используется, если engine не прислал своё резюме. Ничего не выдумывает."""
-        last_user = self.db.one(
-            "SELECT content FROM messages WHERE session_id=? AND role='user' AND in_context=1 "
-            "ORDER BY seq DESC LIMIT 1",
-            (session_id,),
-        )
-        task = ctx.topic or (last_user["content"] if last_user else "Клиент запросил обратную связь")
+        task = ctx.topic or last_user or "Клиент запросил обратную связь"
         unknowns = [label for f, label in OPTIONAL_FIELDS.items() if not getattr(ctx.contact, f)]
         return LeadSummary(
             task=task[:300],
@@ -282,17 +334,23 @@ class LeadService:
     def _write_file(self, view: LeadView) -> Path:
         self.leads_dir.mkdir(parents=True, exist_ok=True)
         path = self.leads_dir / f"{view.lead_id}.md"
-        tmp = path.with_suffix(".md.tmp")
-        tmp.write_text(self.render_markdown(view), encoding="utf-8")
-        tmp.replace(path)
+        temp_path = None
+        try:
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as temp:
+                temp_path = Path(temp.name)
+                temp.write(self.render_markdown(view))
+            temp_path.replace(path)
+        finally:
+            if temp_path:
+                temp_path.unlink(missing_ok=True)
         return path
 
     def list_saved(self) -> list[LeadView]:
-        rows = self.db.all("SELECT session_id FROM leads WHERE status='saved' ORDER BY saved_at DESC")
-        return [self.view(r["session_id"]) for r in rows]
+        rows = self.db.all("SELECT * FROM leads WHERE status='saved' ORDER BY saved_at DESC")
+        return [self._saved_view(row) for row in rows]
 
     def by_id(self, lead_id: str) -> LeadView:
-        row = self.db.one("SELECT session_id FROM leads WHERE id=?", (lead_id,))
+        row = self.db.one("SELECT * FROM leads WHERE id=? AND status='saved'", (lead_id,))
         if not row:
             raise ApiError(404, "lead_not_found", "Заявка не найдена")
-        return self.view(row["session_id"])
+        return self._saved_view(row)

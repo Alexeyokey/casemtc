@@ -177,6 +177,20 @@
           ],
           "default": null
         },
+        "offer_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Непрозрачный идентификатор версии контактов и резюме для подтверждения",
+          "title": "Offer Id"
+        },
         "revision": {
           "default": 0,
           "title": "Revision",

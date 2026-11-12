@@ -79,6 +79,18 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_messages_session ON messages(session_id, seq);
     CREATE INDEX idx_traces_session ON traces(session_id, request_id);
     """,
+    # v2: a mutable draft and an immutable confirmed lead can coexist.
+    """
+    ALTER TABLE leads ADD COLUMN draft_summary_json TEXT;
+    UPDATE leads SET draft_summary_json=summary_json;
+    CREATE TABLE lead_save_requests (
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        idempotency_key TEXT NOT NULL,
+        offer_id TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        PRIMARY KEY (session_id, idempotency_key)
+    );
+    """,
 ]
 
 

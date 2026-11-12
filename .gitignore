@@ -1,11 +1,16 @@
-__pycache__/
-*.pyc
-.pytest_cache/
 .venv/
-# персональные данные диалогов, заявки, экспорты, отчёты замеров
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.coverage
+htmlcov/
 data/
 exports/
 reports/
-# закрытая БЗ, индексы, ключи
-.env
+artifacts/
 *.zip
+*.log
+.DS_Store

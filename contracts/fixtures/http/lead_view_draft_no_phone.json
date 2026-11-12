@@ -31,6 +31,7 @@
     ],
     "next_step": "Связаться с клиентом по телефону и уточнить неизвестные сведения"
   },
+  "offer_id": null,
   "revision": 0,
   "saved_at": null,
   "delivery": "stored_only",

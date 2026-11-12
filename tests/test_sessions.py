@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
+import backend.app as backend_app
 from backend.archive import export_all
 from backend.db import Database
 from tests.conftest import GateEngine, RecordingEngine
@@ -87,6 +91,47 @@ def test_concurrent_turns_rejected(make_api):
     assert len(api.get(f"/api/v1/sessions/{sid}", tok).json()["messages"]) == 2
 
 
+def test_same_request_is_replayed_after_delayed_admission(make_api, monkeypatch):
+    eng = RecordingEngine()
+    api, app = make_api(engine=eng)
+    sid, tok = api.new_session()
+    chat = app.state.chat
+    ready = threading.Event()
+    resume = threading.Event()
+    first_thread = None
+    original_one = chat.db.one
+
+    def pause_stale_lookup(sql, params=()):
+        row = original_one(sql, params)
+        if threading.current_thread() is first_thread and "SELECT * FROM turns WHERE" in sql:
+            # The old admission read could return before a second caller
+            # committed the same ID. The new read is inside the write transaction.
+            ready.set()
+            assert resume.wait(5)
+        return row
+
+    monkeypatch.setattr(chat.db, "one", pause_stale_lookup)
+
+    def first_request():
+        nonlocal first_thread
+        first_thread = threading.current_thread()
+        try:
+            return chat.handle_turn(sid, tok, "same-id", "Вопрос про учёт")
+        finally:
+            ready.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(first_request)
+        try:
+            assert ready.wait(5)
+            second = chat.handle_turn(sid, tok, "same-id", "Вопрос про учёт")
+        finally:
+            resume.set()
+        assert first.result(timeout=5).assistant_message_id == second.assistant_message_id
+    assert second.replayed
+    assert len(eng.requests) == 1
+
+
 def test_engine_failure_then_retry_same_request_id(make_api):
     class FlakyEngine(RecordingEngine):
         fail = True
@@ -123,6 +168,61 @@ def test_failed_turn_not_in_context_of_next_turn(make_api):
     assert eng.requests[-1].history == []
     msgs = api.get(f"/api/v1/sessions/{sid}", tok).json()["messages"]
     assert msgs[0]["in_context"] is False  # в архиве, но не в контексте
+
+
+def test_failed_request_cannot_be_retried_after_newer_turn(make_api):
+    class FailOnce(RecordingEngine):
+        def __init__(self):
+            super().__init__()
+            self.failed = False
+
+        def consult(self, request):
+            if request.request_id == "old" and not self.failed:
+                self.failed = True
+                raise TimeoutError
+            return super().consult(request)
+
+    eng = FailOnce()
+    api, _ = make_api(engine=eng)
+    sid, tok = api.new_session()
+    api.say(sid, tok, "Старый вопрос", "old", expect=502)
+    newer = api.say(sid, tok, "Новый вопрос", "new")
+    error = api.say(sid, tok, "Старый вопрос", "old", expect=409)["error"]
+    assert error["code"] == "turn_superseded" and not error["retryable"]
+    assert "новое сообщение" in error["message"]
+
+    api.say(sid, tok, "Старый вопрос", "resubmitted")
+    assert [(msg.role.value, msg.content) for msg in eng.requests[-1].history] == [
+        ("user", "Новый вопрос"), ("assistant", newer["answer"]),
+    ]
+    msgs = api.get(f"/api/v1/sessions/{sid}", tok).json()["messages"]
+    assert [(msg["request_id"], msg["in_context"]) for msg in msgs] == [
+        ("old", False), ("new", True), ("new", True), ("resubmitted", True), ("resubmitted", True),
+    ]
+
+
+def test_legacy_out_of_order_replies_are_grouped_in_engine_history(make_api):
+    eng = RecordingEngine()
+    api, app = make_api(engine=eng)
+    sid, tok = api.new_session()
+    older = api.say(sid, tok, "Старый вопрос", "old")
+    newer = api.say(sid, tok, "Новый вопрос", "new")
+    with app.state.db.tx() as conn:
+        # Старый код мог дописать ответ на старую реплику после нового ответа.
+        conn.execute("UPDATE messages SET seq=seq+4 WHERE session_id=?", (sid,))
+        conn.executemany("UPDATE messages SET seq=? WHERE id=?", [
+            (1, older["user_message_id"]), (2, newer["user_message_id"]),
+            (3, newer["assistant_message_id"]), (4, older["assistant_message_id"]),
+        ])
+        conn.executemany("UPDATE turns SET finished_at=? WHERE session_id=? AND request_id=?", [
+            ("2026-01-01T00:00:00.000+00:00", sid, "new"),
+            ("2026-01-01T00:00:01.000+00:00", sid, "old"),
+        ])
+    api.say(sid, tok, "Ещё один вопрос", "last")
+    assert [(msg.role.value, msg.content) for msg in eng.requests[-1].history] == [
+        ("user", "Новый вопрос"), ("assistant", newer["answer"]),
+        ("user", "Старый вопрос"), ("assistant", older["answer"]),
+    ]
 
 
 def test_foreign_session_is_not_accessible(api):
@@ -212,6 +312,70 @@ def test_cancel_turn_keeps_archive_but_not_context(make_api):
     assert len(msgs) == 2 and not any(m["in_context"] for m in msgs)
 
 
+@pytest.mark.parametrize("outcome", ["success", "storage_error", "close"])
+def test_cancel_or_close_after_generation_wins_before_commit(make_api, monkeypatch, outcome):
+    api, app = make_api()
+    sid, tok = api.new_session()
+    before_commit = threading.Event()
+    resume = threading.Event()
+    persist = app.state.chat._persist_result
+
+    def pause_persist(*args, **kwargs):
+        before_commit.set()
+        assert resume.wait(5)
+        if outcome == "storage_error":
+            raise OSError("synthetic persist failure")
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(app.state.chat, "_persist_result", pause_persist)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        turn = pool.submit(api.say, sid, tok, "Свяжите со специалистом", "late", 409)
+        try:
+            assert before_commit.wait(5)
+            if outcome == "close":
+                assert api.post(f"/api/v1/sessions/{sid}/close", tok).status_code == 200
+            else:
+                cancelled = api.post(f"/api/v1/sessions/{sid}/turns/late/cancel", tok)
+                assert cancelled.json()["status"] == "cancelled"
+        finally:
+            resume.set()
+        assert turn.result(timeout=5)["error"]["code"] == (
+            "session_closed" if outcome == "close" else "turn_cancelled"
+        )
+
+    assert api.post(f"/api/v1/sessions/{sid}/turns/late/cancel", tok).json()["status"] == "cancelled"
+    trace = api.get(f"/api/v1/sessions/{sid}/turns/late/debug", tok).json()
+    assert trace["status"] == "cancelled"
+    if outcome == "storage_error":
+        assert trace["error"]["stage"] == "backend_persist"
+    view = api.get(f"/api/v1/sessions/{sid}", tok).json()
+    assert view["lead"] is None
+    assert not any(message["in_context"] for message in view["messages"])
+
+
+def test_engine_error_does_not_overwrite_cancellation(make_api):
+    class FailingGate(GateEngine):
+        def consult(self, request):
+            super().consult(request)
+            raise TimeoutError("synthetic engine timeout")
+
+    eng = FailingGate()
+    api, _ = make_api(engine=eng)
+    sid, tok = api.new_session()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        turn = pool.submit(api.say, sid, tok, "__gate__ вопрос", "fail-late", 409)
+        try:
+            assert eng.entered.wait(5)
+            cancelled = api.post(f"/api/v1/sessions/{sid}/turns/fail-late/cancel", tok)
+            assert cancelled.json()["status"] == "cancelled"
+        finally:
+            eng.release.set()
+        assert turn.result(timeout=5)["error"]["code"] == "turn_cancelled"
+    assert api.post(f"/api/v1/sessions/{sid}/turns/fail-late/cancel", tok).json()["status"] == "cancelled"
+    trace = api.get(f"/api/v1/sessions/{sid}/turns/fail-late/debug", tok).json()
+    assert trace["status"] == "cancelled" and trace["error"]["stage"] == "engine"
+
+
 def test_sse_stream(api):
     sid, tok = api.new_session()
     r = api.c.post(f"/api/v1/sessions/{sid}/messages/stream", headers={"X-Client-Token": tok},
@@ -221,18 +385,54 @@ def test_sse_stream(api):
     assert events == ["accepted", "final"]
 
 
+def test_sse_accepted_turn_can_be_cancelled_immediately(make_api, monkeypatch):
+    eng = GateEngine()
+    api, app = make_api(engine=eng)
+    sid, tok = api.new_session()
+    serialize = backend_app._sse
+
+    def cancel_at_acceptance(event, data):
+        if event == "accepted":
+            try:
+                assert app.state.chat.cancel_turn(sid, data["request_id"]) == "cancelled"
+            finally:
+                eng.release.set()
+        return serialize(event, data)
+
+    monkeypatch.setattr(backend_app, "_sse", cancel_at_acceptance)
+    stream = api.post(f"/api/v1/sessions/{sid}/messages/stream", tok,
+                      json={"request_id": "sse-cancel", "text": "Вопрос __gate__ про учёт"})
+    assert stream.status_code == 200
+    assert "event: accepted" in stream.text and "event: error" in stream.text
+    assert "turn_cancelled" in stream.text and "event: final" not in stream.text
+
+
+def test_sse_rejected_admission_never_emits_accepted(api):
+    sid, tok = api.new_session()
+    api.post(f"/api/v1/sessions/{sid}/close", tok)
+    stream = api.post(f"/api/v1/sessions/{sid}/messages/stream", tok,
+                      json={"request_id": "sse-closed", "text": "Вопрос после закрытия"})
+    assert stream.status_code == 200
+    assert "session_closed" in stream.text and "event: accepted" not in stream.text
+
+
 def test_retry_after_cancel_does_not_duplicate(make_api):
     eng = GateEngine()
     api, _ = make_api(engine=eng)
     sid, tok = api.new_session()
-    th = threading.Thread(target=lambda: api.c.post(
-        f"/api/v1/sessions/{sid}/messages", headers={"X-Client-Token": tok},
-        json={"request_id": "c-2", "text": "вопрос __gate__ про учёт"}))
-    th.start()
-    assert eng.entered.wait(5)
-    api.post(f"/api/v1/sessions/{sid}/turns/c-2/cancel", tok)
-    eng.release.set()
-    th.join(5)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        for _ in range(2):
+            eng.entered.clear()
+            eng.release.clear()
+            turn = pool.submit(api.say, sid, tok, "вопрос __gate__ про учёт", "c-2", 409)
+            try:
+                assert eng.entered.wait(5)
+                assert api.post(f"/api/v1/sessions/{sid}/turns/c-2/cancel", tok).json()["status"] == "cancelled"
+            finally:
+                eng.release.set()
+            assert turn.result(timeout=5)["error"]["code"] == "turn_cancelled"
     r = api.say(sid, tok, "вопрос __gate__ про учёт", "c-2")
     msgs = api.get(f"/api/v1/sessions/{sid}", tok).json()["messages"]
     assert len(msgs) == 2 and all(m["in_context"] for m in msgs) and r["assistant_message_id"] == msgs[1]["id"]
+    trace = api.get(f"/api/v1/sessions/{sid}/turns/c-2/debug", tok).json()
+    assert trace["attempt"] == 3 and trace["status"] == "completed"

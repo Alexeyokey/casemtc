@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 
-from backend.redaction import RedactingFilter, redact, redact_text
+from uvicorn.logging import AccessFormatter, DefaultFormatter
+
+from backend.redaction import RedactingFilter, install_log_redaction, redact, redact_text
 from core.contracts import ActionType, ConsultationResult, Evidence, StageTiming
 from core.stub_engine import StubEngine
 
@@ -42,7 +45,8 @@ def test_user_answer_has_no_raw_sources(api):
 def test_failed_stage_visible_and_secret_masked(make_api):
     class LeakyFail(StubEngine):
         def consult(self, request):
-            raise ConnectionError("POST https://llm/v1 failed: Authorization: Bearer abcdefghijklmnop123 "
+            raise ConnectionError("POST https://llm/v1 failed: Authorization: Bearer abcdefghijklmnop123\n"
+                                  "Cookie: session=super-secret-session; another=also-secret\n"
                                   "api_key=sk-SECRETSECRETSECRET client phone +7 999 000-00-10")
 
     api, _ = make_api(engine=LeakyFail())
@@ -52,7 +56,7 @@ def test_failed_stage_visible_and_secret_masked(make_api):
     dumped = json.dumps(t, ensure_ascii=False)
     assert t["status"] == "failed" and t["error"]["stage"] == "engine"
     assert any(s["name"] == "engine" and s["status"] == "error" for s in t["timings"])
-    for secret in ("abcdefghijklmnop123", "sk-SECRET", "9990000010"):
+    for secret in ("abcdefghijklmnop123", "super-secret-session", "also-secret", "sk-SECRET", "9990000010"):
         assert secret not in dumped
 
 
@@ -103,6 +107,31 @@ def test_log_filter_masks():
     assert "qwertyuiop12" not in rec.getMessage()
 
 
+def test_log_filter_redacts_formatted_headers_and_nested_args(caplog):
+    install_log_redaction()
+    logger = logging.getLogger("casemtc.client")
+    logger.warning("request\nCookie: %s\nstatus: %d", "session=raw-cookie; second=raw-second", 429)
+    logger.warning("payload=%(payload)r", {"payload": {"Proxy-Authorization": "raw-proxy",
+                   "headers": [(b"Set-Cookie", b"session=raw-set-cookie; HttpOnly"),
+                               ("X-CSRF-Token", "raw-csrf"), ("Accept", "application/json")]}})
+    logger.warning({"Password": "raw-password", "status": "unchanged"})
+    for secret in ("raw-cookie", "raw-second", "raw-proxy", "raw-set-cookie", "raw-csrf", "raw-password"):
+        assert secret not in caplog.text
+    assert "Cookie: [REDACTED]\nstatus: 429" in caplog.text
+    assert "application/json" in caplog.text and "unchanged" in caplog.text
+
+
+def test_log_filter_masks_full_cookie_lines_and_sensitive_query_params():
+    original = ("Set-Cookie: session=raw-cookie; Path=/; SameSite=Lax\n"
+                "Proxy-Authorization=Basic raw-proxy\n"
+                "response: {'X-Archive-Token': 'raw-archive', 'status': 'ok'}\n"
+                "headers: [(b'Cookie', b'session=raw-bytes-cookie')]\n"
+                "GET /?x-client-token=raw-client&name=public")
+    masked = redact_text(original)
+    assert "raw-" not in masked
+    assert "'status': 'ok'" in masked and "&name=public" in masked
+
+
 def test_evidence_text_survives_redaction_in_trace(api):
     sid, tok = api.new_session()
     api.say(sid, tok, "Вопрос про отчёты и показания счётчиков", "e")
@@ -115,10 +144,18 @@ def test_log_filter_keeps_uvicorn_args_shape_and_masks_traceback():
                             ("127.0.0.1:1", "POST", "/x?token=abcdefgh123", "1.1", 200), None)
     RedactingFilter().filter(rec)
     assert len(rec.args) == 5 and "abcdefgh123" not in rec.getMessage()
+    access = AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False)
+    formatted = access.format(rec)
+    assert "POST /x?token=[REDACTED] HTTP/1.1" in formatted and "200 OK" in formatted
     try:
-        raise RuntimeError("Bearer zzzzzzzzzzzz9999 failed")
+        raise RuntimeError("Bearer zzzzzzzzzzzz9999 failed\nCookie: session=raw-error; another=raw-other")
     except RuntimeError:
-        import sys
-        rec2 = logging.LogRecord("casemtc", logging.ERROR, __file__, 1, "boom", (), sys.exc_info())
+        rec2 = logging.LogRecord("uvicorn.error", logging.ERROR, __file__, 1, "boom %s", ("for user",),
+                                 sys.exc_info(), sinfo="GET /?x-archive-token=raw-stack&trace=1")
+    rec2.color_message = "boom %s\nCookie: color=raw-color"
     RedactingFilter().filter(rec2)
     assert rec2.exc_info is None and "zzzzzzzz" not in rec2.exc_text and "RuntimeError" in rec2.exc_text
+    formatter = DefaultFormatter("%(levelprefix)s %(message)s", use_colors=True)
+    formatted = formatter.format(rec2)
+    assert "boom for user" in formatted and "RuntimeError" in formatted and "&trace=1" in formatted
+    assert "raw-" not in formatted

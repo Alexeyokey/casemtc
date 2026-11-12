@@ -22,8 +22,9 @@ def test_specialist_request_phone_without_company_to_saved_lead(make_api, settin
     preview = api.get(f"/api/v1/sessions/{sid}/lead", tok).json()
     assert preview["contact"]["company"] is None and "Компания" in preview["missing_fields"]
     key = str(uuid.uuid4())
-    saved = api.post(f"/api/v1/sessions/{sid}/lead/save", tok, json={"idempotency_key": key}).json()
-    again = api.post(f"/api/v1/sessions/{sid}/lead/save", tok, json={"idempotency_key": key}).json()
+    confirmation = {"idempotency_key": key, "offer_id": preview["offer_id"]}
+    saved = api.post(f"/api/v1/sessions/{sid}/lead/save", tok, json=confirmation).json()
+    again = api.post(f"/api/v1/sessions/{sid}/lead/save", tok, json=confirmation).json()
     assert saved == again and saved["status"] == "saved"
     md = api.get(f"/api/v1/sessions/{sid}/lead.md", tok).text
     assert "+79990000021" in md and "3 объектах" in md and "CRM, почта и уведомления не подключены" in md

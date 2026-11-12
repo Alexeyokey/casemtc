@@ -64,8 +64,7 @@ def fixtures() -> dict[str, object]:
     lead_saved = LeadView(lead_id="lead_0000000000000001", session_id=SID, status="saved", contact=PHONE_ONLY,
                           callback_requested=True, missing_fields=["ФИО", "Компания", "Регион"], summary=SUMMARY,
                           revision=1, saved_at="2026-11-11T10:00:05.000+00:00",
-                          status_text="Заявка сохранена в системе. Менеджер увидит её в списке заявок. "
-                                      "Отправка в CRM или на почту не подключена.")
+                          status_text="Заявка сохранена в системе. Отправка в CRM или на почту не подключена.")
     return {
         # ---------- ядро
         "core/request_first_turn": ConsultationRequest(
@@ -106,6 +105,10 @@ def fixtures() -> dict[str, object]:
             status_text="Заявка не сохранена: для связи нужен телефон. Консультацию можно продолжать, "
                         "история диалога сохраняется."),
         "http/lead_view_saved_phone_only": lead_saved,
+        "http/lead_view_ready_phone_only": LeadView(
+            lead_id="lead_0000000000000001", session_id=SID, status="ready", contact=PHONE_ONLY,
+            callback_requested=True, missing_fields=["ФИО", "Компания", "Регион"], summary=SUMMARY,
+            offer_id="a" * 64, status_text="Проверьте контакты и резюме перед сохранением заявки."),
         "http/lead_view_refused": LeadView(
             session_id=SID, status="none", contact=ContactInfo(), contact_refused=True,
             missing_fields=["Телефон", "ФИО", "Компания", "Регион"],

@@ -22,9 +22,9 @@ class ConsultationEngine(Protocol):
     def consult(self, request: ConsultationRequest) -> ConsultationResult: ...
 ```
 
-- Ядро не зависит от HTTP, CSV и БД (это проверяет `test_core_has_no_http_csv_or_db_dependency`). Web-backend и `solution.py` — два адаптера одного ядра.
-- Реализация подключается переменной `CONSULTATION_ENGINE=module:Factory`. По умолчанию используется `core.stub_engine:StubEngine`: синтетическая заглушка для параллельной разработки, а не консультант.
-- Engine — функция от запроса. Он не хранит состояние между сессиями и не читает архив.
+- Контракт ядра не зависит от HTTP, CSV и БД. В режиме с базой веб-адаптер `RagEngine` и платформенный `solution.py` используют общий `RagConsultant` и клиент организаторов. Веб-адаптер дополняет результат состоянием контактов и отладкой.
+- `CONSULTATION_ENGINE=module:Factory` задаёт веб-реализацию явно. При `ENERGYTOOL_KB_PATH` веб подключает `RagEngine`. Без настроек запускается синтетический `StubEngine`.
+- Консультант получает состояние в запросе. Архив остаётся в хранилище веб-сервера.
 
 ### `ConsultationRequest`
 
@@ -36,7 +36,7 @@ class ConsultationEngine(Protocol):
 | `client_context: ClientContext` | Состояние консультации, возвращённое предыдущим ходом той же сессии. Для новой сессии пустое |
 | `debug` | Заполнить `retrieved` в результате |
 
-Для CSV-адаптера (I2): каждая строка CSV — отдельный `session_id`. Историю из `question` I2 разбирает в `history`, `client_context` пустой.
+Платформенный CSV обрабатывает каждую строку как отдельную консультацию. `solution.py` читает историю из `question` и передаёт её в `RagConsultant`.
 
 ### `ClientContext` (семантика полей — C1, Максим)
 
@@ -67,9 +67,9 @@ class ConsultationEngine(Protocol):
 
 - Телефон нормализуется в E.164 (`core/phone.py`): РФ `+7`/`8`/10 цифр, международный формат с `+`.
 - **Черновик** (`draft`) — нет валидного телефона. Консультация и история продолжаются.
-- **Готова** (`ready`) — валидный телефон есть. ФИО, компания и регион предлагаются (`missing_fields`), но не обязательны (QA05).
-- **Сохранена** (`saved`) — запись в БД и файл `data/leads/<lead_id>.md`. `delivery` всегда `stored_only`: CRM, почта и уведомления не подключены, и в UI нельзя писать «менеджер уведомлён» (QA06).
-- **Отказ** — `contact_refused=true`. Заявка не создаётся, помощь продолжается.
+- **Готова** (`ready`) — телефон прошёл проверку формата. ФИО, компания и регион предлагаются в `missing_fields`. Предпросмотр содержит `offer_id`, который связывает подтверждение с показанными контактами и резюме.
+- **Сохранена** (`saved`) — подтверждённая ревизия в SQLite. Из неё строится Markdown. Редактирование контактов и продолжение диалога меняют черновик. Для изменения сохранённой ревизии требуется новое подтверждение. `delivery=stored_only` означает сохранение в системе (QA06).
+- **Отказ** — `contact_refused=true`. Текущий черновик теряет возможность сохранения. Консультация продолжается.
 
 ## 3. HTTP API (`/api/v1`)
 
@@ -87,10 +87,10 @@ class ConsultationEngine(Protocol):
 | GET | `/sessions/{id}/lead` | Предпросмотр заявки → `LeadView` |
 | PUT | `/sessions/{id}/lead/contacts` | Частичное обновление контактов (`ContactsUpdate`) |
 | POST | `/sessions/{id}/lead/refuse` | Клиент отказался от контактов |
-| POST | `/sessions/{id}/lead/save` | Сохранить: `{idempotency_key}` → `LeadView` |
+| POST | `/sessions/{id}/lead/save` | Подтвердить показанный черновик `{offer_id,idempotency_key}` → `LeadView` |
 | GET | `/sessions/{id}/lead.md` | Человекочитаемая заявка |
 | GET | `/archive/sessions`, `/archive/sessions/{id}`, `/archive/export.jsonl`, `/archive/leads`, `/archive/leads/{id}.md` | Архив для проверяющего (`X-Archive-Token`) |
-| GET | `/health` | Версия контракта и подключённый engine |
+| GET | `/health` | Готовность SQLite, версия контракта, подключённый engine и SHA сборки при наличии |
 
 ### Ход, повтор, отмена
 
@@ -98,9 +98,14 @@ class ConsultationEngine(Protocol):
 - Повтор завершённого хода → тот же ответ, `replayed=true`, без дубля сообщений.
 - Тот же `request_id` с другим текстом → `409 request_id_conflict`.
 - Пока идёт ход → `409 turn_in_progress` (`retryable=true`).
-- Ошибка engine → `502 engine_error`, ошибка хранилища → `500 storage_error`. Оба `retryable=true`: сообщение клиента в архиве, повтор с тем же `request_id` не создаёт дубль.
-- Отмена: ответ, пришедший после отмены, хранится в архиве с `in_context=false` и не попадает в историю. Ответ клиенту: `409 turn_cancelled`.
+- SSE отправляет `accepted` после сохранения хода в БД. С этого момента его можно отменить. Ошибка до регистрации хода приходит отдельным `error`.
+- Ошибка консультанта → `502 engine_error`. Ошибка хранилища → `500 storage_error`. Сообщение остаётся в архиве. Повтор с тем же ID доступен, пока следующий ход ещё не принят. Если он уже принят, сервер возвращает `409 turn_superseded`. Старую реплику можно отправить новым сообщением.
+- Если отмена записана первой, клиент получает `409 turn_cancelled`. Отменённые реплики исключаются из контекста консультанта. Если ответ уже сохранён, отмена возвращает `completed`.
 - Закрытая сессия → `409 session_closed`.
+
+### Подтверждение заявки
+
+Отправляйте `offer_id` из показанного пользователю предпросмотра. При `409 stale_offer` загрузите новый предпросмотр и попросите подтвердить его. При обрыве связи или `503 lead_file_unavailable` повторите исходный запрос с теми же `offer_id` и `idempotency_key`. Ревизия заявки при таком повторе сохраняется.
 
 ### Ошибки
 
@@ -108,7 +113,7 @@ class ConsultationEngine(Protocol):
 {"error": {"code": "turn_in_progress", "message": "текст для пользователя", "request_id": "…", "retryable": true}}
 ```
 
-Коды: `session_not_found`, `session_closed`, `turn_in_progress`, `request_id_conflict`, `turn_cancelled`, `turn_not_found`, `engine_error`, `storage_error`, `invalid_phone`, `phone_required`, `lead_not_found`, `trace_not_found`, `debug_disabled`, `archive_forbidden`, `validation_error`.
+Коды чата: `session_not_found`, `session_closed`, `turn_in_progress`, `request_id_conflict`, `turn_cancelled`, `turn_superseded`, `turn_not_found`, `engine_error`, `storage_error`. Коды заявки: `invalid_phone`, `phone_required`, `contacts_refused`, `stale_offer`, `lead_request_conflict`, `lead_file_unavailable`, `lead_not_found`. Служебные коды: `trace_not_found`, `debug_disabled`, `archive_forbidden`, `validation_error`, `internal_error`.
 
 ## 4. Разделение ответа, debug и архива
 

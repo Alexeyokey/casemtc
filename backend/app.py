@@ -6,15 +6,17 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from core.contracts import CONTRACT_VERSION
 from core.engine import DEFAULT_ENGINE, ConsultationEngine, load_engine
@@ -40,6 +42,7 @@ from .sessions import ChatService
 from .settings import Settings
 
 log = logging.getLogger("casemtc")
+DEMO_DIR = Path(__file__).with_name("demo")
 ERRORS = {409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse},
           502: {"model": ErrorResponse}}
 
@@ -50,7 +53,7 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
     db = Database(settings.db_path)
     engine_name = settings.engine_spec or DEFAULT_ENGINE
     if engine is None:
-        engine = load_engine(settings.engine_spec)
+        engine = load_engine(engine_name)
     else:
         engine_name = type(engine).__module__ + ":" + type(engine).__name__
     leads = LeadService(db, settings.leads_dir)
@@ -87,9 +90,21 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
             raise ApiError(403, "archive_forbidden", "Неверный X-Archive-Token")
 
     # ------------------------------------------------------------- health
+    @app.get("/", include_in_schema=False)
+    def demo_page():
+        return FileResponse(DEMO_DIR / "index.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/demo.js", include_in_schema=False)
+    def demo_script():
+        return FileResponse(DEMO_DIR / "chat.js", media_type="text/javascript",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/health", include_in_schema=False)
     @app.get("/api/v1/health")
     def health():
-        return {"status": "ok", "contract_version": CONTRACT_VERSION, "engine": engine_name}
+        db.one("SELECT 1")
+        return {"status": "ok", "contract_version": CONTRACT_VERSION, "engine": engine_name,
+                "build_sha": settings.build_sha}
 
     # ------------------------------------------------------------- sessions
     @app.post("/api/v1/sessions", response_model=SessionCreated, status_code=201, responses=ERRORS)
@@ -121,19 +136,44 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
     @app.post("/api/v1/sessions/{session_id}/messages/stream", responses=ERRORS)
     def send_message_stream(session_id: str, body: TurnRequest,
                             x_client_token: Optional[str] = Header(default=None)):
-        """SSE-вариант: события accepted → final | error. Токены ответа не стримятся
-        (engine возвращает ответ целиком); событие accepted позволяет UI сразу
-        показать индикатор ожидания."""
+        """SSE: accepted after admission, then final/error. Admission errors send only error."""
         chat.authorize(session_id, x_client_token)
 
-        def gen():
-            yield _sse("accepted", {"request_id": body.request_id})
-            try:
-                r = chat.handle_turn(session_id, x_client_token, body.request_id, body.text)
-                r.debug_available = settings.debug_api
-                yield _sse("final", r.model_dump(mode="json"))
-            except ApiError as e:
-                yield _sse("error", e.body()["error"] | {"status": e.status})
+        async def gen():
+            loop = asyncio.get_running_loop()
+            events: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
+
+            def publish(event: str, data: dict) -> None:
+                try:
+                    loop.call_soon_threadsafe(events.put_nowait, (event, data))
+                except RuntimeError:
+                    # The loop may already be closed during server shutdown.
+                    pass
+
+            def run_turn() -> None:
+                try:
+                    response = chat.handle_turn(
+                        session_id, x_client_token, body.request_id, body.text,
+                        on_admitted=lambda: publish("accepted", {"request_id": body.request_id}),
+                    )
+                    response.debug_available = settings.debug_api
+                    publish("final", response.model_dump(mode="json"))
+                except ApiError as exc:
+                    publish("error", exc.body()["error"] | {"status": exc.status})
+                except Exception:
+                    log.exception("stream failed session=%s request=%s", session_id, body.request_id)
+                    exc = ApiError(500, "internal_error", "Не удалось обработать запрос.",
+                                   request_id=body.request_id)
+                    publish("error", exc.body()["error"] | {"status": exc.status})
+
+            # Keep the admitted turn running after a lost connection so the
+            # client can recover its result with the same request_id.
+            loop.run_in_executor(None, run_turn)
+            while True:
+                event, data = await events.get()
+                yield _sse(event, data)
+                if event != "accepted":
+                    break
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -172,12 +212,12 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
     @app.post("/api/v1/sessions/{session_id}/lead/save", response_model=LeadView, responses=ERRORS)
     def save_lead(session_id: str, body: LeadSaveRequest, x_client_token: Optional[str] = Header(default=None)):
         _session(session_id, x_client_token)
-        return leads.save(session_id, body.idempotency_key)
+        return leads.save(session_id, body.idempotency_key, body.offer_id)
 
     @app.get("/api/v1/sessions/{session_id}/lead.md", response_class=PlainTextResponse, responses=ERRORS)
     def lead_markdown(session_id: str, x_client_token: Optional[str] = Header(default=None)):
         _session(session_id, x_client_token)
-        return PlainTextResponse(leads.render_markdown(leads.view(session_id)),
+        return PlainTextResponse(leads.render_markdown(leads.saved_view(session_id)),
                                  media_type="text/markdown; charset=utf-8")
 
     # ------------------------------------------------------------- archive (проверяющий/менеджер)

@@ -1,0 +1,38 @@
+{
+  "lead_id": "lead_0000000000000001",
+  "session_id": "s_00000000000000000000000000000001",
+  "status": "ready",
+  "contact": {
+    "full_name": null,
+    "phone": "+79990000001",
+    "company": null,
+    "region": null
+  },
+  "contact_refused": false,
+  "callback_requested": true,
+  "missing_fields": [
+    "ФИО",
+    "Компания",
+    "Регион"
+  ],
+  "summary": {
+    "task": "Учёт энергопотребления на складах",
+    "known_facts": [
+      "масштаб: 3 объекта"
+    ],
+    "assumptions": [],
+    "discussed_solutions": [
+      "Вымышленный продукт А: учёт энергопотребления"
+    ],
+    "unknowns": [
+      "ФИО контактного лица",
+      "Компания"
+    ],
+    "next_step": "Связаться с клиентом по телефону и уточнить неизвестные сведения"
+  },
+  "offer_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "revision": 0,
+  "saved_at": null,
+  "delivery": "stored_only",
+  "status_text": "Проверьте контакты и резюме перед сохранением заявки."
+}

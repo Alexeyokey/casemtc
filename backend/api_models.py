@@ -96,6 +96,10 @@ class LeadView(_M):
     callback_requested: bool = False
     missing_fields: list[str] = Field(default_factory=list, description="Что ещё можно предложить заполнить")
     summary: Optional[LeadSummary] = None
+    offer_id: Optional[str] = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$",
+        description="Непрозрачный идентификатор версии контактов и резюме для подтверждения",
+    )
     revision: int = 0
     saved_at: Optional[str] = None
     delivery: Literal["stored_only"] = Field(
@@ -117,6 +121,7 @@ class ContactsUpdate(_M):
 
 class LeadSaveRequest(_M):
     idempotency_key: str = Field(min_length=1, max_length=64)
+    offer_id: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 # ---------------- debug ----------------
