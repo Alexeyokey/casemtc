@@ -13,6 +13,7 @@
 - [Уточнения организаторов: индексы, заявки, debug и оценка](docs/ORGANIZER_QA.md)
 - [Клиент API: запуск, настройки и интеграция для команды](docs/I1_API_CLIENT.md)
 - [Поиск по базе, платформенный запуск и сборка ZIP](docs/I3_SUBMISSION.md)
+- [Локальные замеры и приёмка](docs/I5_VALIDATION.md)
 - [GitHub Issues](https://github.com/Alexeyokey/casemtc/issues)
 - [Этапы/Milestones](https://github.com/Alexeyokey/casemtc/milestones)
 
