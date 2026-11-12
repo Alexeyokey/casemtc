@@ -132,11 +132,21 @@ def test_log_filter_masks_full_cookie_lines_and_sensitive_query_params():
     assert "'status': 'ok'" in masked and "&name=public" in masked
 
 
-def test_evidence_text_survives_redaction_in_trace(api):
+def test_debug_only_reveals_full_fragments_with_archive_and_session_tokens(api):
     sid, tok = api.new_session()
     api.say(sid, tok, "Вопрос про отчёты и показания счётчиков", "e")
-    t = api.get(DBG.format(sid, "e"), tok).json()
-    assert t["used"][0]["text"].startswith("Продукт А")
+    path = DBG.format(sid, "e")
+    public = api.get(path, tok)
+    assert public.headers["cache-control"] == "no-store"
+    assert all(not item["text"] for name in ("used", "retrieved") for item in public.json()[name])
+    assert public.json()["used"][0]["evidence_id"]
+    wrong_token = api.c.get(path, headers={"X-Client-Token": tok, "X-Archive-Token": "wrong"})
+    assert wrong_token.json() == public.json()
+    reviewer = {"X-Archive-Token": "test-archive-token"}
+    assert api.c.get(path, headers=reviewer).status_code == 404
+    privileged = api.c.get(path, headers={**reviewer, "X-Client-Token": tok})
+    assert privileged.headers["cache-control"] == "no-store"
+    assert privileged.json()["used"][0]["text"].startswith("Продукт А")
 
 
 def test_log_filter_keeps_uvicorn_args_shape_and_masks_traceback():

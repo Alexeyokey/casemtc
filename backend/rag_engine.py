@@ -11,7 +11,7 @@ import httpx
 
 from consultation import Turn
 from core.contracts import (
-    ActionType, ClientContext, ConsultationRequest, ConsultationResult,
+    ActionType, ClientContext, ContactInfo, ConsultationRequest, ConsultationResult,
     ContactStatus, Evidence, LeadDraft, LeadSummary, StageTiming,
 )
 from core.phone import extract_phone
@@ -27,6 +27,47 @@ _REFUSAL = re.compile(
     r"|не (?:звоните|перезванивайте)|без (?:контактов|телефона)|не дам (?:телефон|номер)",
     re.IGNORECASE,
 )
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_CORRECTION = re.compile(r"^\s*(?:уточню|уточняю|уточнение|поправка|исправлюсь|на самом деле)\b", re.IGNORECASE)
+_SELF_REPORT = re.compile(r"\b(?:у нас|на нашем объекте|установлено)\b", re.IGNORECASE)
+_COUNTER = r"(?:электро)?сч[её]тчик[а-яё]*"
+_COUNTER_COUNT = re.compile(
+    rf"\b(?:(?P<before>\d+)\s+{_COUNTER}|{_COUNTER}\s*[:=]?\s+(?P<after>\d+))\b", re.IGNORECASE,
+)
+_COUNTER_REPLACEMENT = re.compile(
+    rf"\bне\s+\d+(?:\s+{_COUNTER}\s*,?\s*а\s+(?P<before>\d+)"
+    rf"|\s*,?\s*а\s+(?P<after>\d+)\s+{_COUNTER})\b", re.IGNORECASE,
+)
+_QUALIFIED_COUNT = re.compile(r"\b(?:не|менее|более|меньше|больше|до|около|примерно|порядка)\s*$", re.IGNORECASE)
+_COUNTER_FACT = "Количество счётчиков"
+
+
+def _remember_task(ctx: ClientContext, message: str) -> None:
+    text = redact_text(message).strip()
+    if ctx.topic is None and len(text) > 12:
+        ctx.topic = text[:300]
+
+    for part in _SENTENCE.split(text):
+        explicit_correction = _CORRECTION.search(part)
+        if part.endswith("?") and not explicit_correction:
+            continue
+        replacement = _COUNTER_REPLACEMENT.search(part)
+        correction = replacement or explicit_correction or ", а не " in part.casefold()
+        count = replacement or _COUNTER_COUNT.search(part)
+        if count and (correction or _SELF_REPORT.search(part)) and (
+            replacement or not _QUALIFIED_COUNT.search(part[:count.start(count.lastgroup)])
+        ):
+            value = count.group(count.lastgroup)
+            prior = ctx.facts.get(_COUNTER_FACT)
+            ctx.facts[_COUNTER_FACT] = value
+            matches = list(_COUNTER_COUNT.finditer(ctx.topic or ""))
+            if len(matches) == 1 and (prior is not None or correction):
+                previous = matches[0]
+                start, end = previous.span(previous.lastgroup)
+                if prior is None or previous.group(previous.lastgroup) == prior:
+                    ctx.topic = ctx.topic[:start] + value + ctx.topic[end:]
+        elif correction:
+            ctx.facts["Уточнение клиента"] = part[:300]
 
 
 class RagEngine:
@@ -41,20 +82,24 @@ class RagEngine:
     def consult(self, request: ConsultationRequest) -> ConsultationResult:
         ctx = request.client_context.model_copy(deep=True)
         message = request.message
-        if _REFUSAL.search(message):
+        refusal = _REFUSAL.search(message)
+        if refusal:
             ctx.contact_status = ContactStatus.refused
             ctx.callback_requested = False
-            return self._result(request, ctx, ActionType.answer,
-                                "Хорошо, продолжим консультацию без заявки. Чем ещё помочь?")
+            ctx.contact = ContactInfo()
+            remainder = (message[:refusal.start()] + " " + message[refusal.end():]).lstrip(" .,!?:;—-\n\t").rstrip()
+            if len(remainder) <= 12:
+                return self._result(request, ctx, ActionType.answer,
+                                    "Хорошо, продолжим консультацию без заявки. Чем ещё помочь?")
+            _remember_task(ctx, remainder)
 
-        callback = requests_callback(message)
+        callback = refusal is None and requests_callback(message)
         if callback:
             ctx.callback_requested = True
             ctx.contact_status = ContactStatus.requested
-            task = " ".join(part.strip() for part in re.split(r"(?<=[.!?])\s+", message)
+            task = " ".join(part.strip() for part in _SENTENCE.split(message)
                             if not requests_callback(part))
-            if len(task) > 12:
-                ctx.topic = redact_text(task)[:300]
+            _remember_task(ctx, task)
         phone = extract_phone(message) if ctx.callback_requested else None
         if phone:
             ctx.contact.phone = phone
@@ -63,19 +108,24 @@ class RagEngine:
         if callback or phone:
             return self._contact_result(request, ctx)
 
+        if refusal is None:
+            _remember_task(ctx, message)
         history = tuple(Turn(item.role.value, redact_text(item.content)) for item in request.history)
         with self.slots:
             turn = asyncio.run(self._consult((*history, Turn("user", redact_text(message)))))
         reply = turn.reply
-        if reply.action == "offer_contact" and ctx.contact_status != ContactStatus.refused:
+        if reply.action == "offer_contact":
+            if ctx.contact_status == ContactStatus.refused:
+                return self._result(request, ctx, ActionType.clarify,
+                                    "Продолжим без заявки. Уточните, пожалуйста, какую задачу нужно решить.",
+                                    turn=turn)
             ctx.callback_requested = True
             ctx.contact_status = ContactStatus.requested
             return self._contact_result(request, ctx, turn)
 
-        if len(message.strip()) > 12:
-            ctx.topic = redact_text(message).strip()[:300]
         action = ActionType.clarify if reply.action == "clarify" else ActionType.answer
-        return self._result(request, ctx, action, reply.text, turn=turn)
+        lead = self._draft(ctx) if ctx.callback_requested or ctx.contact.phone else None
+        return self._result(request, ctx, action, reply.text, lead, turn)
 
     async def _consult(self, history: tuple[Turn, ...]) -> RagTurn:
         # The client lives on the event loop of this turn and closes there.
@@ -88,6 +138,10 @@ class RagEngine:
         action = ActionType.lead_ready if ctx.contact.phone else ActionType.collect_contacts
         answer = ("Проверьте контакты и резюме, затем подтвердите сохранение заявки." if ctx.contact.phone
                   else "Оставьте телефон для связи со специалистом. ФИО и компанию можно указать по желанию.")
+        return self._result(request, ctx, action, answer, self._draft(ctx), turn)
+
+    @staticmethod
+    def _draft(ctx: ClientContext) -> LeadDraft:
         summary = LeadSummary(
             task=ctx.topic or "Клиент попросил связаться со специалистом",
             known_facts=[f"{key}: {value}" for key, value in ctx.facts.items()],
@@ -95,8 +149,7 @@ class RagEngine:
             unknowns=[label for name, label in (("full_name", "ФИО"), ("company", "Компания"),
                                                ("region", "Регион")) if not getattr(ctx.contact, name)],
         )
-        lead = LeadDraft(contact=ctx.contact, callback_requested=True, summary=summary)
-        return self._result(request, ctx, action, answer, lead, turn)
+        return LeadDraft(contact=ctx.contact, callback_requested=ctx.callback_requested, summary=summary)
 
     @staticmethod
     def _result(request: ConsultationRequest, ctx: ClientContext, action: ActionType, answer: str,
@@ -106,7 +159,7 @@ class RagEngine:
             answer=answer, action=action,
             clarifying_question=answer if action == ActionType.clarify else None,
             client_context=ctx, lead_draft=lead,
-            used_evidence_ids=list(turn.reply.evidence_ids) if turn and not lead else [],
+            used_evidence_ids=list(turn.reply.evidence_ids) if turn and answer == turn.reply.text else [],
             retrieved=[
                 Evidence(evidence_id=item.id, doc_id=item.path, section=item.heading,
                          text=item.text, retriever="lexical") for item in turn.retrieved

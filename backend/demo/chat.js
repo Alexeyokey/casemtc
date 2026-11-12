@@ -7,7 +7,9 @@ try {
   session = null;
 }
 let busy = false;
+let activeTurn = null;
 let lead;
+let leadOperation = null;
 const saveKeys = new Map();
 
 function remember() {
@@ -28,15 +30,21 @@ function status(text = "", error = false) {
 }
 
 function controls() {
+  const leadBusy = Boolean(leadOperation);
   ui.new.disabled = busy;
-  ui.send.disabled = busy || Boolean(session?.pending);
-  ui.retry.hidden = busy || !session?.pending;
-  ui.cancel.hidden = !busy || !session?.pending;
+  ui.send.disabled = busy || leadBusy || Boolean(session?.pending);
+  ui.retry.hidden = busy || leadBusy || !session?.pending;
+  ui.cancel.hidden = !activeTurn;
+  for (const control of ui.contacts.elements) {
+    control.disabled = busy || leadBusy;
+  }
+  ui.save.disabled = busy || leadBusy;
+  ui.refuse.disabled = busy || leadBusy;
 }
 
-async function api(path, {method = "GET", body} = {}) {
+async function api(path, {method = "GET", body, clientToken} = {}) {
   const headers = {};
-  if (session?.client_token) headers["X-Client-Token"] = session.client_token;
+  if (clientToken) headers["X-Client-Token"] = clientToken;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const response = await fetch(`/api/v1${path}`, {method, headers, body: JSON.stringify(body)});
   const data = await response.json();
@@ -50,14 +58,23 @@ async function api(path, {method = "GET", body} = {}) {
   return data;
 }
 
-function sessionPath(path = "") {
-  return `/sessions/${encodeURIComponent(session.session_id)}${path}`;
+function sessionApi(client, path = "", options) {
+  return api(`/sessions/${encodeURIComponent(client.session_id)}${path}`, {
+    ...options, clientToken: client.client_token,
+  });
 }
 
 function renderLead(next) {
   lead = next;
   ui.lead.hidden = !lead || lead.status === "none";
-  if (ui.lead.hidden) return;
+  if (ui.lead.hidden) {
+    ui.phone.value = "";
+    ui.company.value = "";
+    ui["lead-status"].textContent = "";
+    ui["lead-preview"].textContent = "";
+    ui.save.hidden = true;
+    return;
+  }
   ui["lead-status"].textContent = lead.status_text;
   ui.phone.value = lead.contact.phone || "";
   ui.company.value = lead.contact.company || "";
@@ -72,6 +89,7 @@ function renderLead(next) {
 }
 
 function renderMessage(message) {
+  const client = session;
   const article = document.createElement("article");
   article.className = message.role;
   article.dataset.interrupted = String(!message.in_context);
@@ -80,7 +98,7 @@ function renderMessage(message) {
   const text = document.createElement("p");
   text.textContent = message.content;
   article.append(label, text);
-  if (message.role === "assistant" && message.in_context && session.debug) {
+  if (message.role === "assistant" && message.in_context && client.debug) {
     const sources = document.createElement("button");
     sources.textContent = "Источники и время";
     const details = document.createElement("p");
@@ -93,12 +111,13 @@ function renderMessage(message) {
       details.hidden = false;
       details.textContent = "Загрузка…";
       try {
-        const trace = await api(sessionPath(`/turns/${encodeURIComponent(message.request_id)}/debug`));
+        const trace = await sessionApi(client, `/turns/${encodeURIComponent(message.request_id)}/debug`);
+        if (session !== client) return;
         const used = trace.used.map(item => item.doc_title || item.section || item.evidence_id);
         details.textContent = [used.length ? `Источники ответа: ${used.join(", ")}` : "Ответ без источников",
           ...trace.timings.map(item => `${item.name}: ${Math.round(item.ms)} мс`)].join("\n");
       } catch (error) {
-        details.textContent = error.message;
+        if (session === client) details.textContent = error.message;
       }
     });
     article.append(sources, details);
@@ -106,33 +125,45 @@ function renderMessage(message) {
   return article;
 }
 
-async function refresh() {
-  const current = await api(sessionPath());
+async function refresh(client = session) {
+  const current = await sessionApi(client);
+  if (session !== client) return;
   ui.messages.replaceChildren(...current.messages.map(renderMessage));
   renderLead(current.lead);
 }
 
 async function newSession(close = false) {
-  const created = await api("/sessions", {method: "POST", body: close ? {close_session_id: session.session_id} : {}});
-  session = {...created, debug: session?.debug};
+  const previous = session;
+  const created = await api("/sessions", {
+    method: "POST",
+    body: close ? {close_session_id: previous.session_id} : {},
+    clientToken: previous?.client_token,
+  });
+  session = {...created, debug: previous?.debug};
+  leadOperation = null;
+  saveKeys.clear();
+  ui.messages.replaceChildren();
+  renderLead(null);
   remember();
   ui.message.value = "";
   await refresh();
 }
 
 async function send() {
+  const client = session;
+  const pending = client.pending;
+  activeTurn = pending;
   busy = true;
   controls();
   status("Готовим ответ…");
-  const pending = session.pending;
   try {
-    const result = await api(sessionPath("/messages"), {method: "POST", body: pending});
-    session.debug = result.debug_available;
-    session.pending = null;
+    const result = await sessionApi(client, "/messages", {method: "POST", body: pending});
+    client.debug = result.debug_available;
+    client.pending = null;
     remember();
     ui.message.value = "";
     try {
-      await refresh();
+      await refresh(client);
       status();
     } catch {
       const messages = [
@@ -147,12 +178,13 @@ async function send() {
     }
   } catch (error) {
     if (error.code === "turn_cancelled" || error.status && !error.retryable) {
-      session.pending = null;
+      client.pending = null;
       remember();
     }
-    try { await refresh(); } catch { /* keep the previous history visible */ }
+    try { await refresh(client); } catch { /* keep the previous history visible */ }
     status(error.status ? error.message : "Связь прервалась. История сохранена, сообщение можно повторить.", true);
   } finally {
+    activeTurn = null;
     busy = false;
     controls();
   }
@@ -161,7 +193,7 @@ async function send() {
 ui.chat.addEventListener("submit", async event => {
   event.preventDefault();
   const text = ui.message.value.trim();
-  if (busy || session?.pending || !text) return;
+  if (busy || leadOperation || session?.pending || !text) return;
   if (!session) {
     status("Откройте новый диалог и повторите отправку.", true);
     return;
@@ -170,13 +202,15 @@ ui.chat.addEventListener("submit", async event => {
   remember();
   await send();
 });
-ui.retry.addEventListener("click", () => { if (!busy && session?.pending) send(); });
+ui.retry.addEventListener("click", () => { if (!busy && !leadOperation && session?.pending) send(); });
 ui.cancel.addEventListener("click", async () => {
-  if (!session?.pending) return;
+  const client = session;
+  const pending = activeTurn;
+  if (!pending) return;
   try {
-    await api(sessionPath(`/turns/${session.pending.request_id}/cancel`), {method: "POST"});
+    await sessionApi(client, `/turns/${encodeURIComponent(pending.request_id)}/cancel`, {method: "POST"});
   } catch (error) {
-    status(error.message, true);
+    if (session === client && client.pending === pending) status(error.message, true);
   }
 });
 ui.new.addEventListener("click", async () => {
@@ -196,14 +230,26 @@ ui.new.addEventListener("click", async () => {
 });
 
 async function updateLead(path, options) {
+  const client = session;
+  if (!client || busy || leadOperation) return;
+  leadOperation = client;
+  controls();
   try {
-    renderLead(await api(sessionPath(`/lead/${path}`), options));
+    const next = await sessionApi(client, `/lead/${path}`, options);
+    if (session !== client) return;
+    renderLead(next);
     status();
   } catch (error) {
+    if (session !== client) return;
     if (error.code === "stale_offer") {
-      try { await refresh(); } catch { /* show the original error */ }
+      try { await refresh(client); } catch { /* show the original error */ }
     }
-    status(error.message, true);
+    if (session === client) status(error.message, true);
+  } finally {
+    if (leadOperation === client) {
+      leadOperation = null;
+      controls();
+    }
   }
 }
 
@@ -212,20 +258,17 @@ ui.contacts.addEventListener("submit", event => {
   updateLead("contacts", {method: "PUT", body: {phone: ui.phone.value, company: ui.company.value || null}});
 });
 ui.contacts.addEventListener("input", () => { ui.save.hidden = true; });
-ui.save.addEventListener("click", async () => {
-  if (!lead?.offer_id) return;
+ui.save.addEventListener("click", () => {
+  if (ui.save.disabled || ui.save.hidden || !lead?.offer_id) return;
   const offerId = lead.offer_id;
   if (!saveKeys.has(offerId)) saveKeys.set(offerId, requestId());
-  ui.save.disabled = true;
-  try {
-    await updateLead("save", {method: "POST", body: {offer_id: offerId, idempotency_key: saveKeys.get(offerId)}});
-  } finally {
-    ui.save.disabled = false;
-  }
+  return updateLead("save", {method: "POST", body: {offer_id: offerId, idempotency_key: saveKeys.get(offerId)}});
 });
 ui.refuse.addEventListener("click", () => updateLead("refuse", {method: "POST"}));
 
 async function start() {
+  busy = true;
+  controls();
   try {
     const health = await api("/health");
     if (!health.engine.includes("stub_engine")) ui.mode.textContent = "Консультант подключён к базе знаний.";
@@ -244,8 +287,10 @@ async function start() {
     }
   } catch (error) {
     status(`Не удалось открыть чат. ${error.message}`, true);
+  } finally {
+    busy = false;
+    controls();
   }
-  controls();
 }
 
 start();

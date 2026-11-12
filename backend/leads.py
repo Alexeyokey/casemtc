@@ -67,11 +67,12 @@ class LeadService:
                 ("lead_" + uuid.uuid4().hex[:16], session_id, "draft", ContactInfo().model_dump_json(), ts, ts),
             )
 
-    def _update_draft(self, conn, session_id: str, ctx: ClientContext, summary: Optional[LeadSummary]) -> None:
+    def _update_draft(self, conn, session_id: str, ctx: ClientContext, summary: Optional[LeadSummary], *,
+                      context_changed: bool = False) -> None:
         self._ensure_row(conn, session_id)
         row = self._row(session_id)
         summary_json = summary.model_dump_json() if summary else row["draft_summary_json"]
-        if ctx.contact_status == ContactStatus.refused:
+        if ctx.contact_status == ContactStatus.refused or (context_changed and summary is None):
             summary_json = None
         conn.execute("UPDATE leads SET draft_summary_json=?, updated_at=? WHERE session_id=?",
                      (summary_json, now_iso(), session_id))
@@ -113,7 +114,9 @@ class LeadService:
             summary = draft.summary if draft else None
 
         if draft or ctx.callback_requested or any(ctx.contact.model_dump().values()) or self._row(session_id):
-            self._update_draft(conn, session_id, ctx, summary)
+            context_changed = (ctx.topic != current.topic or ctx.facts != current.facts
+                               or ctx.assumptions != current.assumptions)
+            self._update_draft(conn, session_id, ctx, summary, context_changed=context_changed)
         return ctx
 
     def _load_draft(self, session_id: str):

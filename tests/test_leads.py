@@ -163,6 +163,36 @@ def test_saved_snapshot_changes_only_after_new_preview_is_confirmed(api, setting
     assert new_phone in file.read_text("utf-8")
 
 
+def test_context_change_invalidates_cached_summary_when_engine_omits_draft(make_api):
+    from core.stub_engine import StubEngine
+
+    corrected_topic = "Учёт арендаторов для трёх объектов"
+
+    class ContextOnlyEngine(StubEngine):
+        def consult(self, request):
+            result = super().consult(request)
+            if request.message == corrected_topic:
+                result.client_context.topic = corrected_topic
+                result.lead_draft = None
+            return result
+
+    api, _ = make_api(engine=ContextOnlyEngine())
+    sid, token = api.new_session()
+    route = BASE.format(sid)
+    api.say(sid, token, "Нужен учёт на одном объекте. Свяжите со специалистом.")
+    offer = api.put(route + "/contacts", token, json={"phone": "+79990000011"}).json()
+    first = _save(api, sid, token, "first", offer["offer_id"]).json()
+
+    updated = api.say(sid, token, corrected_topic)["lead"]
+    assert updated["summary"]["task"] == corrected_topic
+    assert updated["offer_id"] != offer["offer_id"]
+    assert first["summary"]["task"] in api.get(route + ".md", token).text
+    stale = _save(api, sid, token, "second", offer["offer_id"])
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "stale_offer"
+    latest = _save(api, sid, token, "second", updated["offer_id"]).json()
+    assert latest["revision"] == first["revision"] + 1 and latest["summary"]["task"] == corrected_topic
+
+
 def test_existing_phone_cannot_be_saved_after_refusal(api):
     sid, tok = api.new_session()
     route = BASE.format(sid)

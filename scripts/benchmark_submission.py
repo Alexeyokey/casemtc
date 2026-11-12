@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -42,7 +43,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        if self.path not in ("/cold/v1/chat/completions", "/warm/v1/chat/completions"):
+        if self.path not in ("/cold/v1/chat/completions", "/warm/v1/chat/completions", "/demo/v1/chat/completions"):
             self.send_error(404)
             return
         with self.server.calls_lock:
@@ -101,15 +102,35 @@ def run_worker(command: list[str], work_dir: Path, data_dir: Path, url: str,
     return result
 
 
-def validate_csv(output: Path) -> None:
+def validate_csv(output: Path, expected_ids: list[str]) -> list[str]:
     with output.open(encoding="utf-8", newline="") as file:
         reader = csv.DictReader(file)
         rows = list(reader)
-    if reader.fieldnames != ["id", "answer"] or [row["id"] for row in rows] != [key for key, _ in QUESTIONS]:
+    if reader.fieldnames != ["id", "answer"] or [row["id"] for row in rows] != expected_ids:
         raise BenchmarkError("В выходном CSV не совпадают схема или ID вопросов.")
     answers = [row["answer"] for row in rows]
-    if answers[:2] != [SYNTHETIC_ANSWER] * 2 or not answers[2] or answers[2] == SYNTHETIC_ANSWER:
-        raise BenchmarkError("Выходной CSV не совпадает с ожидаемым поведением фикстур.")
+    if any(not answer or not answer.strip() for answer in answers):
+        raise BenchmarkError("В выходном CSV есть пустой ответ.")
+    return answers
+
+
+def check_demo(root: Path, entrypoint: Path, questions: Path, knowledge: Path, url: str) -> dict:
+    data_dir, work_dir = root / "demo-input", root / "demo-work"
+    data_dir.mkdir()
+    work_dir.mkdir()
+    shutil.copyfile(questions, data_dir / "questions.csv")
+    shutil.copyfile(knowledge, data_dir / "knowledge-base.zip")
+    with (data_dir / "questions.csv").open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        if reader.fieldnames != ["id", "question"]:
+            raise BenchmarkError("В демо-вопросах ожидаются столбцы id,question.")
+        ids = [row["id"] for row in reader]
+    if not ids or len(ids) != len(set(ids)) or any(not item for item in ids):
+        raise BenchmarkError("В демо-вопросах нужны непустые уникальные ID.")
+    started = time.perf_counter()
+    run_worker([str(entrypoint)], work_dir, data_dir, url)
+    validate_csv(work_dir / "submission.csv", ids)
+    return {"questions": len(ids), "answers": len(ids), "seconds": round(time.perf_counter() - started, 6)}
 
 
 def percentile(samples: list[float], quantile: float) -> float:
@@ -157,7 +178,8 @@ def source_revision(project: Path, archive: ZipFile) -> tuple[str, bool]:
     return commit, True
 
 
-def benchmark(project: Path, artifact: Path | None, rounds: int) -> dict:
+def benchmark(project: Path, artifact: Path | None, rounds: int, *,
+              demo_inputs: tuple[Path, Path] | None = None) -> dict:
     with TemporaryDirectory(prefix="energytool-benchmark-") as directory:
         root = Path(directory)
         archive_path = build_submission(project, artifact or root / "submission.zip")
@@ -180,17 +202,21 @@ def benchmark(project: Path, artifact: Path | None, rounds: int) -> dict:
                 started = time.perf_counter()
                 run_worker([str(package / "solution.py")], work_dir, data_dir, f"{host}/cold/v1")
                 cold_duration = time.perf_counter() - started
-                validate_csv(work_dir / "submission.csv")
+                answers = validate_csv(work_dir / "submission.csv", [key for key, _ in QUESTIONS])
+                if answers[:2] != [SYNTHETIC_ANSWER] * 2 or answers[2] == SYNTHETIC_ANSWER:
+                    raise BenchmarkError("Выходной CSV не совпадает с ожидаемым поведением фикстур.")
                 warm = run_worker([str(Path(__file__).resolve()), "--worker", str(rounds)],
                                   work_dir, data_dir, f"{host}/warm/v1", package=package)
                 metrics = json.loads(warm.stdout)
+                demo = (check_demo(root, package / "solution.py", *demo_inputs, f"{host}/demo/v1")
+                        if demo_inputs else None)
             finally:
                 server.shutdown()
                 thread.join()
 
-        if server.calls != {"cold": 2, "warm": 1 + 2 * rounds}:
+        if server.calls["cold"] != 2 or server.calls["warm"] != 1 + 2 * rounds:
             raise BenchmarkError("Число обращений к локальному прокси не совпало с фикстурами.")
-        return {
+        report = {
             "mode": "synthetic_local_http_proxy",
             "platform_score": None,
             "profile": "runtime",
@@ -208,6 +234,9 @@ def benchmark(project: Path, artifact: Path | None, rounds: int) -> dict:
             "index_build_seconds": metrics.pop("index_build_seconds"),
             "warm": {**metrics, "chat_requests": server.calls["warm"] - 1, "warmup_chat_requests": 1},
         }
+        if demo is not None:
+            report["organizer_demo_local"] = {**demo, "chat_requests": server.calls["demo"]}
+        return report
 
 
 def main() -> int:
@@ -218,14 +247,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, help="Сохранить проверенный ZIP по этому пути.")
     parser.add_argument("--output", type=Path, help="Сохранить JSON-отчёт по этому пути.")
+    parser.add_argument("--demo-questions", type=Path, help="Локальная копия выданного demo_questions.csv.")
+    parser.add_argument("--demo-knowledge", type=Path, help="Локальная копия выданного knowledge-base.zip.")
     parser.add_argument("--rounds", type=int, default=10, help="Число прогретых проходов по трём вопросам.")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("Число проходов должно быть положительным.")
     if args.artifact and args.output and args.artifact.resolve() == args.output.resolve():
         parser.error("Для архива и отчёта нужны разные пути.")
+    if bool(args.demo_questions) != bool(args.demo_knowledge):
+        parser.error("Для демо-прогона укажите оба файла: --demo-questions и --demo-knowledge.")
+    demo_inputs = (args.demo_questions, args.demo_knowledge) if args.demo_questions else None
+    if demo_inputs:
+        inputs = {path.resolve() for path in demo_inputs}
+        outputs = {path.resolve() for path in (args.artifact, args.output) if path}
+        if inputs & outputs:
+            parser.error("Архив и отчёт должны записываться отдельно от входных файлов.")
     try:
-        report = benchmark(Path(__file__).resolve().parents[1], args.artifact, args.rounds)
+        report = benchmark(Path(__file__).resolve().parents[1], args.artifact, args.rounds, demo_inputs=demo_inputs)
         rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             args.output.write_text(rendered, encoding="utf-8")

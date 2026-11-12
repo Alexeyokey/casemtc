@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Body, FastAPI, Header, Query, Request
+from fastapi import Body, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
@@ -81,12 +81,16 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
     def _session(sid: str, token: Optional[str]):
         return chat.authorize(sid, token)
 
+    def _archive_allowed(token: Optional[str]) -> bool:
+        return bool(token and settings.archive_token and
+                    hmac.compare_digest(token.encode(), settings.archive_token.encode()))
+
     def _archive_guard(token: Optional[str]) -> None:
         if not settings.archive_token:
             raise ApiError(403, "archive_forbidden",
                            "Архив по HTTP выключен: задайте ARCHIVE_TOKEN или используйте "
                            "python -m backend.archive")
-        if not token or not hmac.compare_digest(token, settings.archive_token):
+        if not _archive_allowed(token):
             raise ApiError(403, "archive_forbidden", "Неверный X-Archive-Token")
 
     # ------------------------------------------------------------- health
@@ -185,11 +189,23 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
 
     @app.get("/api/v1/sessions/{session_id}/turns/{request_id}/debug", response_model=TraceView,
              responses=ERRORS)
-    def debug_trace(session_id: str, request_id: str, x_client_token: Optional[str] = Header(default=None)):
+    def debug_trace(session_id: str, request_id: str, response: Response,
+                    x_client_token: Optional[str] = Header(default=None),
+                    x_archive_token: Optional[str] = Header(default=None)):
         if not settings.debug_api:
             raise ApiError(403, "debug_disabled", "Debug выключен (CASEMTC_DEBUG_API=0)")
         _session(session_id, x_client_token)
-        return chat.trace(session_id, request_id)
+        response.headers["Cache-Control"] = "no-store"
+        trace = chat.trace(session_id, request_id)
+        if _archive_allowed(x_archive_token):
+            return trace
+        return trace.model_copy(update={
+            "retrieved": [item.model_copy(update={"text": ""}) for item in trace.retrieved],
+            "used": [item.model_copy(update={"text": ""}) for item in trace.used],
+            "timings": [item.model_copy(update={"error": None}) for item in trace.timings],
+            "error": {key: trace.error[key] for key in ("stage", "type") if key in trace.error}
+            if trace.error else None,
+        })
 
     # ------------------------------------------------------------- leads
     @app.get("/api/v1/sessions/{session_id}/lead", response_model=LeadView, responses=ERRORS)

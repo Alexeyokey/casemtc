@@ -32,34 +32,19 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
           python -m pip install -r requirements-dev.txt
 
-      - name: Run tests
+      - name: Run Python tests
         run: python -B -m pytest -q
 
-      - name: Check the packaged CSV entry point
+      - name: Check chat session isolation
+        run: node --test tests/demo_chat.test.mjs
+
+      - name: Run the packaged solution against a local test proxy
         run: |
           scratch=$(mktemp -d)
           trap 'rm -rf "$scratch"' EXIT
-          python -B scripts/build_submission.py --output "$scratch/submission.zip"
-          python -m zipfile -e "$scratch/submission.zip" "$scratch/package"
-          mkdir "$scratch/data" "$scratch/run"
-          cat > "$scratch/data/questions.csv" <<'CSV'
-          id,question
-          001,"Первая строка
-          Вторая строка"
-          2,Другая запись
-          CSV
-          cd "$scratch/run"
-          DATA_DIR="$scratch/data" python -B "$scratch/package/solution.py" --demo
-          python - <<'PY'
-          import csv
-
-          with open("submission.csv", encoding="utf-8", newline="") as file:
-              reader = csv.DictReader(file)
-              assert reader.fieldnames == ["id", "answer"]
-              rows = list(reader)
-          assert [row["id"] for row in rows] == ["001", "2"]
-          assert all(row["answer"].strip() for row in rows)
-          PY
+          python -B scripts/benchmark_submission.py --rounds 1 \
+            --artifact "$scratch/submission.zip" --output "$scratch/report.json"
+          jq -e '.artifact_matches_commit and .cold.questions == 3 and .cold.chat_requests == 2' "$scratch/report.json"
 
       - name: Check the web demo and persistent storage
         id: compose

@@ -4,6 +4,7 @@ import json
 from zipfile import ZipFile
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
@@ -16,11 +17,11 @@ from rag_consultation import RagConsultant
 from solution import run_submission
 
 
-def test_web_and_csv_share_rag_and_web_confirms_a_local_lead(tmp_path):
+@pytest.fixture
+def rag_fixture(tmp_path):
     archive = tmp_path / "knowledge-base.zip"
     with ZipFile(archive, "w") as target:
         target.writestr("metering.md", "# Учёт счётчиков арендаторов\n\nПроверьте совместимость счётчиков.")
-    question = "С чего начать учёт показаний счётчиков арендаторов?"
     answer = "Начните с проверки совместимости счётчиков."
     calls = []
 
@@ -34,9 +35,13 @@ def test_web_and_csv_share_rag_and_web_confirms_a_local_lead(tmp_path):
             {"finish_reason": "stop", "message": {"content": json.dumps(result)}},
         ]})
 
-    transport = httpx.MockTransport(model)
-    config = APIConfig("https://fixture.invalid/v1", "synthetic", "synthetic-model")
-    knowledge = KnowledgeBase.from_zip(archive)
+    return (KnowledgeBase.from_zip(archive), APIConfig("https://fixture.invalid/v1", "synthetic", "synthetic-model"),
+            httpx.MockTransport(model), answer, calls)
+
+
+def test_web_and_csv_share_rag_and_web_confirms_a_local_lead(tmp_path, rag_fixture):
+    knowledge, config, transport, answer, calls = rag_fixture
+    question = "С чего начать учёт показаний счётчиков арендаторов?"
     settings = Settings(db_path=str(tmp_path / "chat.sqlite3"), leads_dir=str(tmp_path / "leads"),
                         build_sha="fixture-build")
     with TestClient(create_app(settings, RagEngine(knowledge, config, transport=transport))) as web:
@@ -60,7 +65,8 @@ def test_web_and_csv_share_rag_and_web_confirms_a_local_lead(tmp_path):
         correction = "У нас 12 счётчиков. Свяжите со специалистом."
         assert send("callback", correction)["action"] == "collect_contacts"
         lead = send("phone", "+7 999 000-00-31")["lead"]
-        assert lead["summary"]["task"] == "У нас 12 счётчиков."
+        assert lead["summary"]["task"] == question
+        assert lead["summary"]["known_facts"] == ["Количество счётчиков: 12"]
         saved = web.post(f"{path}/lead/save", headers=headers, json={
             "idempotency_key": "confirmed", "offer_id": lead["offer_id"],
         })
@@ -85,3 +91,49 @@ def test_web_and_csv_share_rag_and_web_confirms_a_local_lead(tmp_path):
     with (tmp_path / "submission.csv").open(encoding="utf-8", newline="") as file:
         assert list(csv.DictReader(file)) == [{"id": "001", "answer": answer}]
     assert calls[0] == calls[1]
+
+
+@pytest.mark.parametrize("correction", (
+    "Уточнение: счётчиков 87, а не 12. Это влияет на совместимость?",
+    "У нас не 12 счётчиков, а 87. Это влияет на совместимость?",
+    "Уточнение: у нас 87 электросчётчиков, а не 12, это влияет на совместимость?",
+))
+def test_rag_correction_refreshes_offer_without_losing_project_context(make_api, rag_fixture, correction):
+    knowledge, config, transport, answer, _ = rag_fixture
+    api, _ = make_api(engine=RagEngine(knowledge, config, transport=transport))
+    sid, token = api.new_session()
+    route = f"/api/v1/sessions/{sid}/lead"
+    api.say(sid, token, "Нужен учёт арендаторов в бизнес-центре. У нас 12 счётчиков. Свяжите со специалистом.")
+    offer = api.put(route + "/contacts", token, json={"phone": "+7 999 000-00-31"}).json()
+    followup = api.say(sid, token, "А какие ограничения?")["lead"]
+    assert followup["offer_id"] == offer["offer_id"]
+    assert followup["summary"] == offer["summary"]
+
+    response = api.say(sid, token, correction, request_id="correction")
+    assert response["answer"] == answer
+    latest = response["lead"]
+    assert "Нужен учёт арендаторов в бизнес-центре" in latest["summary"]["task"]
+    assert "87 счётчиков" in latest["summary"]["task"] and "12" not in latest["summary"]["task"]
+    assert latest["summary"]["known_facts"] == ["Количество счётчиков: 87"]
+    assert latest["offer_id"] != offer["offer_id"]
+    trace = api.get(f"/api/v1/sessions/{sid}/turns/correction/debug", token).json()
+    assert trace["used"]
+
+    stale = api.post(route + "/save", token, json={"idempotency_key": "save", "offer_id": offer["offer_id"]})
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "stale_offer"
+    saved = api.post(route + "/save", token, json={"idempotency_key": "save", "offer_id": latest["offer_id"]})
+    assert saved.status_code == 200 and saved.json()["summary"] == latest["summary"]
+
+
+def test_rag_answers_a_product_question_in_the_same_turn_as_contact_refusal(make_api, rag_fixture):
+    knowledge, config, transport, answer, calls = rag_fixture
+    api, _ = make_api(engine=RagEngine(knowledge, config, transport=transport))
+    sid, token = api.new_session()
+    route = f"/api/v1/sessions/{sid}/lead"
+    api.say(sid, token, "Свяжите со специалистом.")
+    offer = api.put(route + "/contacts", token, json={"phone": "+7 999 000-00-31"}).json()
+    reply = api.say(sid, token, "Не хочу оставлять телефон. Как начать учёт счётчиков арендаторов?")
+    assert reply["answer"] == answer and len(calls) == 1
+    assert reply["lead"]["contact_refused"] and reply["lead"]["contact"]["phone"] is None
+    save = api.post(route + "/save", token, json={"idempotency_key": "save", "offer_id": offer["offer_id"]})
+    assert save.status_code == 409 and save.json()["error"]["code"] == "contacts_refused"

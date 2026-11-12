@@ -39,4 +39,4 @@ docker compose exec -T web python -B scripts/build_submission.py \
 docker compose cp web:/tmp/energytool-submission.zip ./energytool-submission.zip
 ```
 
-GitHub Actions запускает тесты на синтетических данных и локальном прокси, проверяет распакованный ZIP на демо-входе и поднимает веб-сервис через Compose. Команды и проверка платформенного режима описаны отдельно. [Платформенный запуск](I3_SUBMISSION.md)
+Workflow запускает тесты Python и проверку изоляции веб-сессий на Node.js, прогоняет распакованный ZIP через локальный HTTP-прокси и проверяет сохранение истории после пересоздания контейнера Compose. Команды и проверка платформенного режима описаны отдельно. [Платформенный запуск](I3_SUBMISSION.md)
