@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnergyTool S1 draft examples 0.1",
+  "type": "object",
+  "required": ["turn_request", "ordinary_answer", "clarification", "offer_contact", "refused_contact", "phone_only", "saved_lead", "cancelled", "debug"],
+  "additionalProperties": false,
+  "properties": {
+    "turn_request": {"$ref": "#/$defs/turn_request"},
+    "ordinary_answer": {"$ref": "#/$defs/turn"},
+    "clarification": {"$ref": "#/$defs/turn"},
+    "offer_contact": {"$ref": "#/$defs/turn"},
+    "refused_contact": {"$ref": "#/$defs/turn"},
+    "phone_only": {"$ref": "#/$defs/lead_request"},
+    "saved_lead": {"$ref": "#/$defs/saved_lead"},
+    "cancelled": {"$ref": "#/$defs/turn"},
+    "debug": {"$ref": "#/$defs/debug"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "text": {"type": "string", "minLength": 1},
+    "turn_request": {
+      "type": "object",
+      "required": ["request_id", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {"$ref": "#/$defs/id"},
+        "message": {"$ref": "#/$defs/text"}
+      }
+    },
+    "clarification": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {"$ref": "#/$defs/text"},
+        "field": {"$ref": "#/$defs/id"}
+      }
+    },
+    "lead_draft": {
+      "type": "object",
+      "required": ["offer_id", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "offer_id": {"$ref": "#/$defs/id"},
+        "summary": {"$ref": "#/$defs/text"}
+      }
+    },
+    "reply": {
+      "type": "object",
+      "required": ["text", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {"$ref": "#/$defs/text"},
+        "action": {"enum": ["answer", "clarify", "offer_contact"]},
+        "clarification": {"$ref": "#/$defs/clarification"},
+        "lead_draft": {"$ref": "#/$defs/lead_draft"}
+      },
+      "allOf": [
+        {"if": {"properties": {"action": {"const": "clarify"}}}, "then": {"required": ["clarification"]}, "else": {"not": {"required": ["clarification"]}}},
+        {"if": {"properties": {"action": {"const": "offer_contact"}}}, "then": {"required": ["lead_draft"]}, "else": {"not": {"required": ["lead_draft"]}}}
+      ]
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "message": {"$ref": "#/$defs/text"},
+        "retryable": {"type": "boolean"}
+      }
+    },
+    "turn": {
+      "type": "object",
+      "required": ["session_id", "request_id", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {"$ref": "#/$defs/id"},
+        "request_id": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["queued", "running", "completed", "failed", "cancelled"]},
+        "reply": {"$ref": "#/$defs/reply"},
+        "error": {"$ref": "#/$defs/error"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "completed"}}}, "then": {"required": ["reply"]}, "else": {"not": {"required": ["reply"]}}},
+        {"if": {"properties": {"status": {"const": "failed"}}}, "then": {"required": ["error"]}, "else": {"not": {"required": ["error"]}}}
+      ]
+    },
+    "lead_request": {
+      "type": "object",
+      "required": ["offer_id", "phone"],
+      "additionalProperties": false,
+      "properties": {
+        "offer_id": {"$ref": "#/$defs/id"},
+        "phone": {"type": "string", "pattern": "^[+]?[0-9]{10,15}$"},
+        "name": {"type": ["string", "null"], "minLength": 1},
+        "company": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "saved_lead": {
+      "type": "object",
+      "required": ["lead_id", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "lead_id": {"$ref": "#/$defs/id"},
+        "status": {"const": "saved"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "path", "heading"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/text"},
+        "path": {"$ref": "#/$defs/text"},
+        "heading": {"$ref": "#/$defs/text"}
+      }
+    },
+    "debug": {
+      "type": "object",
+      "required": ["session_id", "request_id", "retrieved", "used_source_ids", "timings_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {"$ref": "#/$defs/id"},
+        "request_id": {"$ref": "#/$defs/id"},
+        "retrieved": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+        "used_source_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "timings_ms": {
+          "type": "object",
+          "required": ["search", "model", "total"],
+          "additionalProperties": false,
+          "properties": {
+            "search": {"type": ["integer", "null"], "minimum": 0},
+            "model": {"type": ["integer", "null"], "minimum": 0},
+            "total": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    }
+  }
+}

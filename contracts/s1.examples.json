@@ -1,0 +1,48 @@
+{
+  "turn_request": {"request_id": "turn-01", "message": "С чего начать проверку счётчиков в бизнес-центре?"},
+  "ordinary_answer": {
+    "session_id": "session-demo",
+    "request_id": "turn-01",
+    "status": "completed",
+    "reply": {"text": "Начните с перечня приборов и способов сбора показаний.", "action": "answer"}
+  },
+  "clarification": {
+    "session_id": "session-demo",
+    "request_id": "turn-02",
+    "status": "completed",
+    "reply": {
+      "text": "Как сейчас снимаете показания?",
+      "action": "clarify",
+      "clarification": {"text": "Как сейчас снимаете показания?", "field": "reading_method"}
+    }
+  },
+  "offer_contact": {
+    "session_id": "session-demo",
+    "request_id": "turn-03",
+    "status": "completed",
+    "reply": {
+      "text": "Если хотите, оставьте телефон для связи со специалистом.",
+      "action": "offer_contact",
+      "lead_draft": {"offer_id": "offer-01", "summary": "Клиент хочет автоматизировать учёт в бизнес-центре. Уточнить список приборов и способы сбора."}
+    }
+  },
+  "refused_contact": {
+    "session_id": "session-demo",
+    "request_id": "turn-04",
+    "status": "completed",
+    "reply": {"text": "Можно продолжить без телефона. Для проверки подготовьте список моделей счётчиков.", "action": "answer"}
+  },
+  "phone_only": {"offer_id": "offer-01", "phone": "+70000000000", "name": null, "company": null},
+  "saved_lead": {"lead_id": "lead-01", "status": "saved"},
+  "cancelled": {"session_id": "session-demo", "request_id": "turn-05", "status": "cancelled"},
+  "debug": {
+    "session_id": "session-demo",
+    "request_id": "turn-01",
+    "retrieved": [
+      {"id": "fixture-metering.md#L1", "path": "fixture-metering.md", "heading": "Проверка приборов"},
+      {"id": "fixture-faq.md#L3", "path": "fixture-faq.md", "heading": "Частые вопросы"}
+    ],
+    "used_source_ids": ["fixture-metering.md#L1"],
+    "timings_ms": {"search": 4, "model": 136, "total": 147}
+  }
+}
