@@ -433,7 +433,7 @@ class OrganizerClient:
                                     invalid_response = False
                                     try:
                                         data = json.loads(raw)
-                                    except (ValueError, UnicodeError):
+                                    except (ValueError, UnicodeError, RecursionError):
                                         invalid_response = True
                                     if invalid_response:
                                         raise OrganizerAPIError("invalid_response", operation, status_code=status)
