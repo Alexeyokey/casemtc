@@ -1,0 +1,37 @@
+{
+  "lead_id": "lead_0000000000000001",
+  "session_id": "s_00000000000000000000000000000001",
+  "status": "saved",
+  "contact": {
+    "full_name": null,
+    "phone": "+79990000001",
+    "company": null,
+    "region": null
+  },
+  "contact_refused": false,
+  "callback_requested": true,
+  "missing_fields": [
+    "ФИО",
+    "Компания",
+    "Регион"
+  ],
+  "summary": {
+    "task": "Учёт энергопотребления на складах",
+    "known_facts": [
+      "масштаб: 3 объекта"
+    ],
+    "assumptions": [],
+    "discussed_solutions": [
+      "Вымышленный продукт А: учёт энергопотребления"
+    ],
+    "unknowns": [
+      "ФИО контактного лица",
+      "Компания"
+    ],
+    "next_step": "Связаться с клиентом по телефону и уточнить неизвестные сведения"
+  },
+  "revision": 1,
+  "saved_at": "2026-11-11T10:00:05.000+00:00",
+  "delivery": "stored_only",
+  "status_text": "Заявка сохранена в системе. Менеджер увидит её в списке заявок. Отправка в CRM или на почту не подключена."
+}

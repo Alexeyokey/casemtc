@@ -1,0 +1,62 @@
+{
+  "contract_version": "1.0.0",
+  "session_id": "s_00000000000000000000000000000001",
+  "request_id": "r-0001",
+  "answer": "Для учёта энергопотребления подойдёт продукт А.",
+  "action": "answer",
+  "clarifying_question": null,
+  "used_evidence_ids": [
+    "syn-001#0"
+  ],
+  "retrieved": [
+    {
+      "evidence_id": "syn-001#0",
+      "doc_id": "synthetic/product_a.md",
+      "doc_title": "Вымышленный продукт А: учёт энергопотребления",
+      "section": "Назначение",
+      "text": "Продукт А (синтетический пример) собирает показания счётчиков и строит отчёты.",
+      "score": 0.82,
+      "retriever": "hybrid"
+    },
+    {
+      "evidence_id": "syn-faq#3",
+      "doc_id": "synthetic/faq.md",
+      "doc_title": "Вымышленный FAQ",
+      "section": "Цены",
+      "text": "Стоимость в синтетической БЗ не указана; её называет менеджер.",
+      "score": 0.41,
+      "retriever": "hybrid"
+    }
+  ],
+  "client_context": {
+    "topic": "Учёт энергопотребления на складах",
+    "facts": {
+      "масштаб": "3 объекта"
+    },
+    "assumptions": {},
+    "contact": {
+      "full_name": null,
+      "phone": null,
+      "company": null,
+      "region": null
+    },
+    "contact_status": "unknown",
+    "callback_requested": false,
+    "extra": {}
+  },
+  "lead_draft": null,
+  "timings": [
+    {
+      "name": "retrieval",
+      "ms": 120.0,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "generation",
+      "ms": 2300.0,
+      "status": "ok",
+      "error": null
+    }
+  ]
+}

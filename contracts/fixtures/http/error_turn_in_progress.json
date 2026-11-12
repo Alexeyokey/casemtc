@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "turn_in_progress",
+    "message": "Дождитесь ответа на предыдущее сообщение",
+    "request_id": "r-0002",
+    "retryable": true
+  }
+}

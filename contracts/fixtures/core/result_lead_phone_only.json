@@ -1,0 +1,51 @@
+{
+  "contract_version": "1.0.0",
+  "session_id": "s_00000000000000000000000000000001",
+  "request_id": "r-0002",
+  "answer": "Спасибо, телефон получен. Подтвердите сохранение заявки.",
+  "action": "lead_ready",
+  "clarifying_question": null,
+  "used_evidence_ids": [],
+  "retrieved": [],
+  "client_context": {
+    "topic": "Учёт энергопотребления на складах",
+    "facts": {
+      "масштаб": "3 объекта"
+    },
+    "assumptions": {},
+    "contact": {
+      "full_name": null,
+      "phone": "+79990000001",
+      "company": null,
+      "region": null
+    },
+    "contact_status": "phone_valid",
+    "callback_requested": true,
+    "extra": {}
+  },
+  "lead_draft": {
+    "contact": {
+      "full_name": null,
+      "phone": "+79990000001",
+      "company": null,
+      "region": null
+    },
+    "callback_requested": true,
+    "summary": {
+      "task": "Учёт энергопотребления на складах",
+      "known_facts": [
+        "масштаб: 3 объекта"
+      ],
+      "assumptions": [],
+      "discussed_solutions": [
+        "Вымышленный продукт А: учёт энергопотребления"
+      ],
+      "unknowns": [
+        "ФИО контактного лица",
+        "Компания"
+      ],
+      "next_step": "Связаться с клиентом по телефону и уточнить неизвестные сведения"
+    }
+  },
+  "timings": []
+}

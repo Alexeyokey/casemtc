@@ -1,0 +1,212 @@
+{
+  "$defs": {
+    "ClientContext": {
+      "additionalProperties": false,
+      "description": "Состояние консультации текущей сессии.\n\nВладелец семантики полей facts/topic — C1 (Максим). Backend хранит объект\nкак есть и передаёт его в следующий ход той же сессии; в новую сессию\nпередаётся пустой ClientContext().",
+      "properties": {
+        "topic": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Текущая тема/задача клиента",
+          "title": "Topic"
+        },
+        "facts": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Известные факты о ситуации клиента, сказанные самим клиентом",
+          "title": "Facts",
+          "type": "object"
+        },
+        "assumptions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Предположения консультанта — не факты",
+          "title": "Assumptions",
+          "type": "object"
+        },
+        "contact": {
+          "$ref": "#/$defs/ContactInfo"
+        },
+        "contact_status": {
+          "$ref": "#/$defs/ContactStatus",
+          "default": "unknown"
+        },
+        "callback_requested": {
+          "default": false,
+          "description": "Клиент явно попросил связаться/перезвонить",
+          "title": "Callback Requested",
+          "type": "boolean"
+        },
+        "extra": {
+          "additionalProperties": true,
+          "description": "Расширения C1 без смены версии контракта",
+          "title": "Extra",
+          "type": "object"
+        }
+      },
+      "title": "ClientContext",
+      "type": "object"
+    },
+    "ContactInfo": {
+      "additionalProperties": false,
+      "description": "Контакты клиента. Отсутствующее поле = None, никогда не выдумывается.",
+      "properties": {
+        "full_name": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Full Name"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Нормализованный телефон в формате E.164 (+7XXXXXXXXXX) или None",
+          "title": "Phone"
+        },
+        "company": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Company"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        }
+      },
+      "title": "ContactInfo",
+      "type": "object"
+    },
+    "ContactStatus": {
+      "enum": [
+        "unknown",
+        "requested",
+        "partial",
+        "phone_valid",
+        "refused"
+      ],
+      "title": "ContactStatus",
+      "type": "string"
+    },
+    "Message": {
+      "additionalProperties": false,
+      "description": "Одна реплика ТЕКУЩЕГО диалога. Архив прошлых сессий сюда не попадает.",
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "content": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "Role": {
+      "enum": [
+        "user",
+        "assistant"
+      ],
+      "title": "Role",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "default": "1.0.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "history": {
+      "description": "Предыдущие реплики ТОЛЬКО этой сессии",
+      "items": {
+        "$ref": "#/$defs/Message"
+      },
+      "title": "History",
+      "type": "array"
+    },
+    "message": {
+      "description": "Текущая реплика клиента",
+      "maxLength": 10000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "client_context": {
+      "$ref": "#/$defs/ClientContext"
+    },
+    "debug": {
+      "default": false,
+      "description": "Собирать retrieved evidence в результат",
+      "title": "Debug",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_id",
+    "request_id",
+    "message"
+  ],
+  "title": "ConsultationRequest",
+  "type": "object"
+}

@@ -1,0 +1,330 @@
+{
+  "$defs": {
+    "ContactInfo": {
+      "additionalProperties": false,
+      "description": "Контакты клиента. Отсутствующее поле = None, никогда не выдумывается.",
+      "properties": {
+        "full_name": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Full Name"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Нормализованный телефон в формате E.164 (+7XXXXXXXXXX) или None",
+          "title": "Phone"
+        },
+        "company": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Company"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        }
+      },
+      "title": "ContactInfo",
+      "type": "object"
+    },
+    "LeadSummary": {
+      "additionalProperties": false,
+      "description": "Резюме для менеджера: актуальная задача, без пересказа всего диалога.",
+      "properties": {
+        "task": {
+          "description": "Актуальная задача клиента",
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "known_facts": {
+          "description": "Сказано клиентом",
+          "items": {
+            "type": "string"
+          },
+          "title": "Known Facts",
+          "type": "array"
+        },
+        "assumptions": {
+          "description": "Предположения, требуют проверки",
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "discussed_solutions": {
+          "description": "Продукты/решения, обсуждённые по БЗ",
+          "items": {
+            "type": "string"
+          },
+          "title": "Discussed Solutions",
+          "type": "array"
+        },
+        "unknowns": {
+          "description": "Что ещё не известно",
+          "items": {
+            "type": "string"
+          },
+          "title": "Unknowns",
+          "type": "array"
+        },
+        "next_step": {
+          "default": "Связаться с клиентом и уточнить неизвестные сведения",
+          "title": "Next Step",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "title": "LeadSummary",
+      "type": "object"
+    },
+    "LeadView": {
+      "additionalProperties": false,
+      "properties": {
+        "lead_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lead Id"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "description": "none — нет данных; draft — нет валидного телефона; ready — можно сохранить; saved — сохранена",
+          "enum": [
+            "none",
+            "draft",
+            "ready",
+            "saved"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "contact": {
+          "$ref": "#/$defs/ContactInfo"
+        },
+        "contact_refused": {
+          "default": false,
+          "title": "Contact Refused",
+          "type": "boolean"
+        },
+        "callback_requested": {
+          "default": false,
+          "title": "Callback Requested",
+          "type": "boolean"
+        },
+        "missing_fields": {
+          "description": "Что ещё можно предложить заполнить",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Fields",
+          "type": "array"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeadSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "revision": {
+          "default": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "saved_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Saved At"
+        },
+        "delivery": {
+          "const": "stored_only",
+          "default": "stored_only",
+          "description": "Заявка только сохраняется в системе; CRM/почта/уведомления не подключены",
+          "title": "Delivery",
+          "type": "string"
+        },
+        "status_text": {
+          "description": "Честное описание фактического состояния для пользователя",
+          "title": "Status Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "status",
+        "contact",
+        "status_text"
+      ],
+      "title": "LeadView",
+      "type": "object"
+    },
+    "MessageView": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "integer"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "integer"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "in_context": {
+          "title": "In Context",
+          "type": "boolean"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "role",
+        "content",
+        "request_id",
+        "in_context",
+        "created_at"
+      ],
+      "title": "MessageView",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "default": "1.0.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "closed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "closed_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Closed At"
+    },
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/MessageView"
+      },
+      "title": "Messages",
+      "type": "array"
+    },
+    "lead": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LeadView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "session_id",
+    "status",
+    "created_at",
+    "messages"
+  ],
+  "title": "SessionView",
+  "type": "object"
+}

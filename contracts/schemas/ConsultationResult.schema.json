@@ -1,0 +1,427 @@
+{
+  "$defs": {
+    "ActionType": {
+      "enum": [
+        "answer",
+        "clarify",
+        "collect_contacts",
+        "lead_ready",
+        "escalate",
+        "out_of_scope"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "ClientContext": {
+      "additionalProperties": false,
+      "description": "Состояние консультации текущей сессии.\n\nВладелец семантики полей facts/topic — C1 (Максим). Backend хранит объект\nкак есть и передаёт его в следующий ход той же сессии; в новую сессию\nпередаётся пустой ClientContext().",
+      "properties": {
+        "topic": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Текущая тема/задача клиента",
+          "title": "Topic"
+        },
+        "facts": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Известные факты о ситуации клиента, сказанные самим клиентом",
+          "title": "Facts",
+          "type": "object"
+        },
+        "assumptions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Предположения консультанта — не факты",
+          "title": "Assumptions",
+          "type": "object"
+        },
+        "contact": {
+          "$ref": "#/$defs/ContactInfo"
+        },
+        "contact_status": {
+          "$ref": "#/$defs/ContactStatus",
+          "default": "unknown"
+        },
+        "callback_requested": {
+          "default": false,
+          "description": "Клиент явно попросил связаться/перезвонить",
+          "title": "Callback Requested",
+          "type": "boolean"
+        },
+        "extra": {
+          "additionalProperties": true,
+          "description": "Расширения C1 без смены версии контракта",
+          "title": "Extra",
+          "type": "object"
+        }
+      },
+      "title": "ClientContext",
+      "type": "object"
+    },
+    "ContactInfo": {
+      "additionalProperties": false,
+      "description": "Контакты клиента. Отсутствующее поле = None, никогда не выдумывается.",
+      "properties": {
+        "full_name": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Full Name"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Нормализованный телефон в формате E.164 (+7XXXXXXXXXX) или None",
+          "title": "Phone"
+        },
+        "company": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Company"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        }
+      },
+      "title": "ContactInfo",
+      "type": "object"
+    },
+    "ContactStatus": {
+      "enum": [
+        "unknown",
+        "requested",
+        "partial",
+        "phone_valid",
+        "refused"
+      ],
+      "title": "ContactStatus",
+      "type": "string"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "Фрагмент БЗ, найденный поиском. В обычный ответ клиенту не выводится.",
+      "properties": {
+        "evidence_id": {
+          "description": "Стабильный id фрагмента внутри индекса",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "doc_id": {
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "doc_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doc Title"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "text": {
+          "description": "Текст фрагмента (только в debug/trace)",
+          "title": "Text",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "retriever": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "bm25 / dense / hybrid / rerank",
+          "title": "Retriever"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "doc_id",
+        "text"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "LeadDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "contact": {
+          "$ref": "#/$defs/ContactInfo"
+        },
+        "callback_requested": {
+          "default": false,
+          "title": "Callback Requested",
+          "type": "boolean"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeadSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "LeadDraft",
+      "type": "object"
+    },
+    "LeadSummary": {
+      "additionalProperties": false,
+      "description": "Резюме для менеджера: актуальная задача, без пересказа всего диалога.",
+      "properties": {
+        "task": {
+          "description": "Актуальная задача клиента",
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "known_facts": {
+          "description": "Сказано клиентом",
+          "items": {
+            "type": "string"
+          },
+          "title": "Known Facts",
+          "type": "array"
+        },
+        "assumptions": {
+          "description": "Предположения, требуют проверки",
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "discussed_solutions": {
+          "description": "Продукты/решения, обсуждённые по БЗ",
+          "items": {
+            "type": "string"
+          },
+          "title": "Discussed Solutions",
+          "type": "array"
+        },
+        "unknowns": {
+          "description": "Что ещё не известно",
+          "items": {
+            "type": "string"
+          },
+          "title": "Unknowns",
+          "type": "array"
+        },
+        "next_step": {
+          "default": "Связаться с клиентом и уточнить неизвестные сведения",
+          "title": "Next Step",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "title": "LeadSummary",
+      "type": "object"
+    },
+    "StageTiming": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "retrieval / generation / total / ...",
+          "title": "Name",
+          "type": "string"
+        },
+        "ms": {
+          "minimum": 0,
+          "title": "Ms",
+          "type": "number"
+        },
+        "status": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "error",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "name",
+        "ms"
+      ],
+      "title": "StageTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "default": "1.0.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "answer": {
+      "description": "Текст для клиента: без имён файлов, rules и сырого RAG-контекста",
+      "maxLength": 10000,
+      "minLength": 1,
+      "title": "Answer",
+      "type": "string"
+    },
+    "action": {
+      "$ref": "#/$defs/ActionType"
+    },
+    "clarifying_question": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Clarifying Question"
+    },
+    "used_evidence_ids": {
+      "description": "Фрагменты, на которые реально опирается ответ (подмножество retrieved)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Used Evidence Ids",
+      "type": "array"
+    },
+    "retrieved": {
+      "description": "Всё, что вернул поиск; заполняется при debug",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Retrieved",
+      "type": "array"
+    },
+    "client_context": {
+      "$ref": "#/$defs/ClientContext",
+      "description": "Обновлённое состояние для следующего хода"
+    },
+    "lead_draft": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LeadDraft"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "timings": {
+      "items": {
+        "$ref": "#/$defs/StageTiming"
+      },
+      "title": "Timings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "session_id",
+    "request_id",
+    "answer",
+    "action"
+  ],
+  "title": "ConsultationResult",
+  "type": "object"
+}

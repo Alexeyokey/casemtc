@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "idempotency_key": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "idempotency_key"
+  ],
+  "title": "LeadSaveRequest",
+  "type": "object"
+}

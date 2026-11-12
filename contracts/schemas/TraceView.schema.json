@@ -1,0 +1,233 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "description": "Фрагмент БЗ, найденный поиском. В обычный ответ клиенту не выводится.",
+      "properties": {
+        "evidence_id": {
+          "description": "Стабильный id фрагмента внутри индекса",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "doc_id": {
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "doc_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doc Title"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "text": {
+          "description": "Текст фрагмента (только в debug/trace)",
+          "title": "Text",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "retriever": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "bm25 / dense / hybrid / rerank",
+          "title": "Retriever"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "doc_id",
+        "text"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "StageTiming": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "retrieval / generation / total / ...",
+          "title": "Name",
+          "type": "string"
+        },
+        "ms": {
+          "minimum": 0,
+          "title": "Ms",
+          "type": "number"
+        },
+        "status": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "error",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "name",
+        "ms"
+      ],
+      "title": "StageTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "default": "1.0.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "attempt": {
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "engine": {
+      "title": "Engine",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "timings": {
+      "items": {
+        "$ref": "#/$defs/StageTiming"
+      },
+      "title": "Timings",
+      "type": "array"
+    },
+    "retrieved": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Retrieved",
+      "type": "array"
+    },
+    "used": {
+      "description": "Подмножество retrieved, на которое опирается ответ",
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Used",
+      "type": "array"
+    },
+    "used_missing_ids": {
+      "description": "id из used_evidence_ids, которых нет среди retrieved — дефект",
+      "items": {
+        "type": "string"
+      },
+      "title": "Used Missing Ids",
+      "type": "array"
+    },
+    "action": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Action"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    }
+  },
+  "required": [
+    "trace_id",
+    "session_id",
+    "request_id",
+    "attempt",
+    "status",
+    "engine",
+    "created_at",
+    "timings",
+    "retrieved",
+    "used"
+  ],
+  "title": "TraceView",
+  "type": "object"
+}
