@@ -55,7 +55,7 @@ class ConsultationEngine(Protocol):
 | `lead_draft` | Контакты и `LeadSummary`, если клиент просит связь или дал контакт |
 | `timings: StageTiming[]` | Реально измеренные этапы (`retrieval`, `generation`, ...) |
 
-### `Evidence` (R3, Влад)
+### `Evidence` (R3, Алексей)
 
 `evidence_id` (стабильный внутри индекса), `doc_id`, `doc_title`, `section`, `text`, `score`, `retriever`.
 
