@@ -1,12 +1,20 @@
 import asyncio
 import csv
+import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from zipfile import ZipFile
 
+import httpx
+
+from consultation import parse_csv_history
+from knowledge_base import KnowledgeBase
+from organizer_api import APIConfig, OrganizerClient
+from rag_consultation import RagConsultant
 from solution import SubmissionError, run_submission
 
 
@@ -108,6 +116,52 @@ class SubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("synthetic-private-payload", str(caught.exception))
         self.assertEqual(self.output_path.read_bytes(), previous)
         self.assertEqual(set(self.root.iterdir()), {self.input_path, self.output_path})
+
+    async def test_platform_adapter_isolates_history_and_reports_proxy_failure(self):
+        archive = self.root / "knowledge-base.zip"
+        with ZipFile(archive, "w") as package:
+            package.writestr("meters.md", "# Счётчики\n\nСчётчики проверяют перед подключением.\n")
+        self.write_questions([
+            ("007", "Пользователь: Счётчики на объекте Кедр.\n"
+                    "Ассистент: Что проверить?\nПользователь: Как подключить счётчики?"),
+            ("02", "Какие счётчики подходят?"),
+        ], encoding="utf-8-sig")
+        previous = b"id,answer\r\nold,previous\r\n"
+        self.output_path.write_bytes(previous)
+        histories = []
+
+        def proxy(request):
+            body = json.loads(request.content)
+            payload = json.loads(body["messages"][-1]["content"])
+            histories.append(payload["history"])
+            if len(histories) == 2:
+                return httpx.Response(503, text="synthetic-private-proxy-error")
+            answer = {
+                "text": "Начните с проверки приборов.",
+                "action": "answer",
+                "summary": None,
+                "evidence_ids": [payload["evidence"][0]["id"]],
+            }
+            return httpx.Response(200, json={"choices": [{
+                "finish_reason": "stop", "message": {"content": json.dumps(answer)},
+            }]})
+
+        config = APIConfig("https://fixture.invalid/v1", "synthetic", "synthetic-model", max_retries=0)
+        async with OrganizerClient(config, transport=httpx.MockTransport(proxy)) as client:
+            engine = RagConsultant(KnowledgeBase.from_zip(archive), client.chat)
+
+            async def answer_question(question):
+                return (await engine.consult(parse_csv_history(question))).text
+
+            with self.assertRaises(SubmissionError) as caught:
+                await self.run_csv(answer_question)
+
+        self.assertEqual([turn["role"] for turn in histories[0]], ["user", "assistant", "user"])
+        self.assertEqual(histories[1], [{"role": "user", "text": "Какие счётчики подходят?"}])
+        self.assertIn("№2", str(caught.exception))
+        self.assertNotIn("synthetic-private-proxy-error", str(caught.exception))
+        self.assertEqual(self.output_path.read_bytes(), previous)
+        self.assertEqual(set(self.root.iterdir()), {archive, self.input_path, self.output_path})
 
     async def test_cancellation_does_not_publish_partial_csv(self):
         self.write_questions([("1", "first"), ("2", "second")])
