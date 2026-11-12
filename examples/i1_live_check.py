@@ -16,7 +16,7 @@ async def check() -> int:
         return 2
     async with OrganizerClient(config) as client:
         probes = (
-            ("chat", lambda: client.chat([{"role": "user", "content": "Ответь кратко по-русски: проверка связи."}], max_tokens=64)),
+            ("chat", lambda: client.chat([{"role": "user", "content": "Ответь кратко по-русски: проверка связи."}])),
             ("embeddings", lambda: client.embed(["проверка связи", "учёт ресурсов"])),
             ("rerank", lambda: client.rerank("учёт ресурсов", ["синтетический текст об учёте ресурсов", "синтетический текст о погоде"])),
         )

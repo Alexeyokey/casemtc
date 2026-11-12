@@ -394,6 +394,16 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
             else:
                 self.fail("Expected JSON failure")
 
+    async def test_deeply_nested_response_is_reported_as_invalid_json(self):
+        content = b"[" * 10_000 + b"]" * 10_000
+        transport = httpx.MockTransport(lambda _: httpx.Response(200, content=content))
+        async with OrganizerClient(config(), transport=transport) as client:
+            with self.assertRaises(OrganizerAPIError) as error:
+                await client.chat(MESSAGES)
+            self.assertEqual(error.exception.code, "invalid_response")
+            self.assertIsNone(error.exception.__context__)
+            self.assertEqual(client.metrics[-1].error_code, "invalid_response")
+
     async def test_body_size_is_bounded(self):
         async with OrganizerClient(config(max_response_bytes=16), transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"x"*17))) as client:
             with self.assertRaises(OrganizerAPIError) as error:
@@ -639,11 +649,13 @@ class LocalHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.actions.extend([{}, {"data": {"data": [{"index": 0, "embedding": [1]}, {"index": 1, "embedding": [2]}]}},
                              {"data": {"results": [{"index": 0}, {"index": 1}]}}])
         result = await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "examples.i1_live_check", "--live"],
-                                         env={"LLM_BASE_URL": self.base_url, "LLM_API_KEY": KEY, "LLM_MODEL": "synthetic-generator"},
+                                         env={"LLM_BASE_URL": self.base_url, "LLM_API_KEY": KEY,
+                                              "LLM_MODEL": "synthetic-generator", "MAX_TOKENS": "512"},
                                          capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)["ok"])
         self.assertEqual(len(self.requests), 3)
+        self.assertEqual(self.requests[0][2]["max_tokens"], 512)
         self.assertNotIn(KEY, result.stdout+result.stderr)
 
 
