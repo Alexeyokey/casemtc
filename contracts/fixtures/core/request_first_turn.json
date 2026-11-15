@@ -1,0 +1,22 @@
+{
+  "contract_version": "1.0.0",
+  "session_id": "s_00000000000000000000000000000001",
+  "request_id": "r-0001",
+  "history": [],
+  "message": "Нужно считать электроэнергию на 3 объектах складов",
+  "client_context": {
+    "topic": null,
+    "facts": {},
+    "assumptions": {},
+    "contact": {
+      "full_name": null,
+      "phone": null,
+      "company": null,
+      "region": null
+    },
+    "contact_status": "unknown",
+    "callback_requested": false,
+    "extra": {}
+  },
+  "debug": false
+}

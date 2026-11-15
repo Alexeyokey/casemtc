@@ -1,0 +1,25 @@
+{
+  "lead_id": null,
+  "session_id": "s_00000000000000000000000000000001",
+  "status": "none",
+  "contact": {
+    "full_name": null,
+    "phone": null,
+    "company": null,
+    "region": null
+  },
+  "contact_refused": true,
+  "callback_requested": false,
+  "missing_fields": [
+    "Телефон",
+    "ФИО",
+    "Компания",
+    "Регион"
+  ],
+  "summary": null,
+  "offer_id": null,
+  "revision": 0,
+  "saved_at": null,
+  "delivery": "stored_only",
+  "status_text": "Вы отказались оставлять контакты. Консультацию можно продолжать."
+}

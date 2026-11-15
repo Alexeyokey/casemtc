@@ -1,0 +1,36 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "default": "1.0.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "client_token": {
+      "description": "Секрет вкладки; передавать в X-Client-Token",
+      "title": "Client Token",
+      "type": "string"
+    },
+    "status": {
+      "const": "active",
+      "default": "active",
+      "title": "Status",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "client_token",
+    "created_at"
+  ],
+  "title": "SessionCreated",
+  "type": "object"
+}

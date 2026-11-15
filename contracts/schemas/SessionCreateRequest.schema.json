@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "close_session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Закрыть прежнюю сессию этого клиента (кнопка «Новый диалог»)",
+      "title": "Close Session Id"
+    }
+  },
+  "title": "SessionCreateRequest",
+  "type": "object"
+}

@@ -1,0 +1,14 @@
+{
+  "contract_version": "1.0.0",
+  "session_id": "s_00000000000000000000000000000001",
+  "request_id": "r-0001",
+  "status": "completed",
+  "user_message_id": 1,
+  "assistant_message_id": 2,
+  "answer": "Для учёта энергопотребления подойдёт продукт А.",
+  "action": "answer",
+  "clarifying_question": null,
+  "lead": null,
+  "debug_available": true,
+  "replayed": false
+}

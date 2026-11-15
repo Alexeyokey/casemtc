@@ -1,0 +1,64 @@
+{
+  "contract_version": "1.0.0",
+  "trace_id": "t_00000000000000000001",
+  "session_id": "s_00000000000000000000000000000001",
+  "request_id": "r-0001",
+  "attempt": 1,
+  "status": "completed",
+  "engine": "core.stub_engine:StubEngine",
+  "created_at": "2026-11-11T10:00:03.000+00:00",
+  "timings": [
+    {
+      "name": "engine.retrieval",
+      "ms": 120.0,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "engine.generation",
+      "ms": 2300.0,
+      "status": "ok",
+      "error": null
+    },
+    {
+      "name": "total",
+      "ms": 2460.0,
+      "status": "ok",
+      "error": null
+    }
+  ],
+  "retrieved": [
+    {
+      "evidence_id": "syn-001#0",
+      "doc_id": "synthetic/product_a.md",
+      "doc_title": "Вымышленный продукт А: учёт энергопотребления",
+      "section": "Назначение",
+      "text": "Продукт А (синтетический пример) собирает показания счётчиков и строит отчёты.",
+      "score": 0.82,
+      "retriever": "hybrid"
+    },
+    {
+      "evidence_id": "syn-faq#3",
+      "doc_id": "synthetic/faq.md",
+      "doc_title": "Вымышленный FAQ",
+      "section": "Цены",
+      "text": "Стоимость в синтетической БЗ не указана; её называет менеджер.",
+      "score": 0.41,
+      "retriever": "hybrid"
+    }
+  ],
+  "used": [
+    {
+      "evidence_id": "syn-001#0",
+      "doc_id": "synthetic/product_a.md",
+      "doc_title": "Вымышленный продукт А: учёт энергопотребления",
+      "section": "Назначение",
+      "text": "Продукт А (синтетический пример) собирает показания счётчиков и строит отчёты.",
+      "score": 0.82,
+      "retriever": "hybrid"
+    }
+  ],
+  "used_missing_ids": [],
+  "action": "answer",
+  "error": null
+}

@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "idempotency_key": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "offer_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Offer Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "idempotency_key",
+    "offer_id"
+  ],
+  "title": "LeadSaveRequest",
+  "type": "object"
+}

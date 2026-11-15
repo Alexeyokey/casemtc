@@ -1,0 +1,28 @@
+{
+  "contract_version": "1.0.0",
+  "session_id": "s_00000000000000000000000000000001",
+  "request_id": "r-0002",
+  "answer": "Хорошо, контакты не обязательны — продолжим консультацию.",
+  "action": "answer",
+  "clarifying_question": null,
+  "used_evidence_ids": [],
+  "retrieved": [],
+  "client_context": {
+    "topic": "Учёт энергопотребления на складах",
+    "facts": {
+      "масштаб": "3 объекта"
+    },
+    "assumptions": {},
+    "contact": {
+      "full_name": null,
+      "phone": null,
+      "company": null,
+      "region": null
+    },
+    "contact_status": "refused",
+    "callback_requested": false,
+    "extra": {}
+  },
+  "lead_draft": null,
+  "timings": []
+}

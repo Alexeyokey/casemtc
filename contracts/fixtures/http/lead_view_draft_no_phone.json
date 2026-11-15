@@ -1,0 +1,39 @@
+{
+  "lead_id": "lead_0000000000000001",
+  "session_id": "s_00000000000000000000000000000001",
+  "status": "draft",
+  "contact": {
+    "full_name": null,
+    "phone": null,
+    "company": null,
+    "region": null
+  },
+  "contact_refused": false,
+  "callback_requested": true,
+  "missing_fields": [
+    "Телефон",
+    "ФИО",
+    "Компания",
+    "Регион"
+  ],
+  "summary": {
+    "task": "Учёт энергопотребления на складах",
+    "known_facts": [
+      "масштаб: 3 объекта"
+    ],
+    "assumptions": [],
+    "discussed_solutions": [
+      "Вымышленный продукт А: учёт энергопотребления"
+    ],
+    "unknowns": [
+      "ФИО контактного лица",
+      "Компания"
+    ],
+    "next_step": "Связаться с клиентом по телефону и уточнить неизвестные сведения"
+  },
+  "offer_id": null,
+  "revision": 0,
+  "saved_at": null,
+  "delivery": "stored_only",
+  "status_text": "Заявка не сохранена: для связи нужен телефон. Консультацию можно продолжать, история диалога сохраняется."
+}
