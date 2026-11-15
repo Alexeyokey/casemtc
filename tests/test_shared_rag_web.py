@@ -29,8 +29,9 @@ def rag_fixture(tmp_path):
         data = json.loads(request.content)
         payload = json.loads(data["messages"][-1]["content"])
         calls.append(payload)
-        result = {"text": answer, "action": "answer", "summary": None,
-                  "evidence_ids": [payload["evidence"][0]["id"]]}
+        source = payload["evidence"][0]
+        result = {"text": answer, "action": "answer", "evidence_ids": [source["id"]],
+                  "support": {source["id"]: source["text"]}}
         return httpx.Response(200, json={"choices": [
             {"finish_reason": "stop", "message": {"content": json.dumps(result)}},
         ]})

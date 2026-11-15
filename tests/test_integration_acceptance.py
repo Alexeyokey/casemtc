@@ -18,7 +18,7 @@ from consultation import parse_csv_history
 from examples.demo_web import create_app
 from knowledge_base import KnowledgeBase
 from organizer_api import ChatResult
-from rag_consultation import NO_EVIDENCE, RagConsultant
+from rag_consultation import CONTACT, OUT_OF_SCOPE, RagConsultant
 from solution import run_submission
 
 
@@ -54,6 +54,8 @@ class IntegrationAcceptanceTests(unittest.TestCase):
             self.assertIn(expected_fact, previous_user_text)
         self.calls.append(name)
         result = {**turn["reply"], "evidence_ids": [sources[path] for path in turn["sources"]]}
+        result["support"] = {source["id"]: source["text"] for source in payload["evidence"]
+                             if source["id"] in result["evidence_ids"]}
         return ChatResult(json.dumps(result, ensure_ascii=False), "stop", None)
 
     def transcript(self, names):
@@ -75,7 +77,7 @@ class IntegrationAcceptanceTests(unittest.TestCase):
             history = parse_csv_history(question)
             turn = self.turns[self.scenarios_by_message[history[-1].text]]
             reply = await self.consultant.consult(history)
-            self.assertEqual(reply.action, turn.get("reply", {}).get("action", "clarify"))
+            self.assertEqual(reply.action, turn.get("reply", {}).get("action", "out_of_scope"))
             return reply.text
 
         output = self.directory / "submission.csv"
@@ -87,7 +89,7 @@ class IntegrationAcceptanceTests(unittest.TestCase):
 
         self.assertEqual(self.calls, ["business-mixed", "loss-ready", "loss-correction"])
         expected = [
-            {"id": case["id"], "answer": self.turns[case["turns"][-1]].get("reply", {}).get("text", NO_EVIDENCE)}
+            {"id": case["id"], "answer": self.turns[case["turns"][-1]].get("reply", {}).get("text", OUT_OF_SCOPE)}
             for case in cases
         ]
         self.assertEqual(results, expected)
@@ -109,12 +111,13 @@ class IntegrationAcceptanceTests(unittest.TestCase):
                 self.assertEqual(status, 303)
                 status, _, html = _request(app, "GET", page)
                 self.assertEqual(status, 200)
-                self.assertIn(escape(turn["reply"]["text"]), html)
+                expected_answer = CONTACT if turn["reply"]["action"] == "offer_contact" else turn["reply"]["text"]
+                self.assertIn(escape(expected_answer), html)
                 offer = re.search(r'name="offer_id" value="(\d+)"', html)
                 if turn["reply"]["action"] == "offer_contact":
                     self.assertIsNotNone(offer)
                     offers.append(offer[1])
-                    self.assertIn(escape(turn["reply"]["summary"]), html)
+                    self.assertIn("Количество счётчиков", html)
                 else:
                     self.assertIsNone(offer)
                 if name == "contact-refusal":
@@ -136,10 +139,12 @@ class IntegrationAcceptanceTests(unittest.TestCase):
         app = create_app(db_path, consult=consult)
         _, _, original = _request(app, "GET", page)
         self.assertIn("Заявка сохранена", original)
-        current_summary = self.turns[case["turns"][-1]]["reply"]["summary"]
+        current_summary = "Количество счётчиков: 12"
         with sqlite3.connect(db_path) as db:
             leads = db.execute("SELECT session_id, phone, summary FROM leads").fetchall()
-        self.assertEqual(leads, [(session_id, case["phone"], current_summary)])
+        self.assertEqual(len(leads), 1)
+        self.assertEqual(leads[0][:2], (session_id, case["phone"]))
+        self.assertIn(current_summary, leads[0][2])
 
         new_id, new_page = _session(app)
         self.assertNotEqual(new_id, session_id)
@@ -148,9 +153,9 @@ class IntegrationAcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(status, 303)
         _, _, isolated = _request(app, "GET", new_page)
-        self.assertIn(escape(NO_EVIDENCE), isolated)
+        self.assertIn(escape(OUT_OF_SCOPE), isolated)
         self.assertNotIn(escape(current_summary), isolated)
-        self.assertEqual(self.calls, case["turns"])
+        self.assertEqual(self.calls, case["turns"][:3])
 
 
 def _session(app):

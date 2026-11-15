@@ -138,6 +138,7 @@ class SubmissionTests(unittest.IsolatedAsyncioTestCase):
                 "action": "answer",
                 "summary": None,
                 "evidence_ids": [payload["evidence"][0]["id"]],
+                "support": {payload["evidence"][0]["id"]: payload["evidence"][0]["text"]},
             }
             return httpx.Response(200, json={"choices": [{
                 "finish_reason": "stop", "message": {"content": json.dumps(answer)},

@@ -10,6 +10,8 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 RUNTIME_FILES = (
     "solution.py",
     "consultation.py",
+    "consultation_context.py",
+    "consultation_grounding.py",
     "knowledge_base.py",
     "organizer_api.py",
     "rag_consultation.py",

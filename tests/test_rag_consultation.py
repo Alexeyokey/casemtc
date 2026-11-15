@@ -62,7 +62,8 @@ class RagConsultationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("фото", evidence["text"])
             reply = {
                 "text": "Начните с проверки совместимости приборов.",
-                "action": "answer", "summary": None, "evidence_ids": [evidence["id"]],
+                "action": "answer", "evidence_ids": [evidence["id"]],
+                "support": {evidence["id"]: evidence["text"]},
             }
             return httpx.Response(200, json={"choices": [{
                 "finish_reason": "stop", "message": {"content": json.dumps(reply)},
@@ -80,8 +81,8 @@ class RagConsultationTests(unittest.IsolatedAsyncioTestCase):
 
         consultant = RagConsultant(self.knowledge, unexpected)
         reply = await consultant.consult((Turn("user", "Рецепт плова с шафраном"),))
-        self.assertEqual(reply.action, "clarify")
-        self.assertIn("недостаточно данных", reply.text)
+        self.assertEqual(reply.action, "out_of_scope")
+        self.assertIn("МТС EnergyTool", reply.text)
         callback = await consultant.consult((Turn("user", "Перезвоните, пожалуйста."),))
         self.assertEqual(callback.action, "offer_contact")
         self.assertTrue(callback.summary)
@@ -96,5 +97,5 @@ class RagConsultationTests(unittest.IsolatedAsyncioTestCase):
         config = APIConfig("https://fixture.invalid", "synthetic", "synthetic-model")
         async with OrganizerClient(config, transport=httpx.MockTransport(transport)) as client:
             reply = await RagConsultant(self.knowledge, client.chat).consult(self.history)
-        self.assertEqual(reply.action, "clarify")
+        self.assertEqual(reply.action, "escalate")
         self.assertNotIn("Гарантируем", reply.text)
