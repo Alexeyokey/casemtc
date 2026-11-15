@@ -85,6 +85,25 @@ _LOCAL_SCOPE = re.compile(
 )
 _FACT_UNITS = {"Количество счётчиков": "счётчиков", "Количество объектов": "объектов"}
 _BOUND_ALIASES = {"как минимум": "не менее", "не ниже": "не менее", "не выше": "не более", "свыше": "более"}
+_CLAUSE = re.compile(r"(?<=[.!?;])\s+|,\s+|\n+")
+_SOFT_LINE_BREAK = re.compile(r"(?<!\n)\n(?![ \t]*(?:\n|(?:[-+*]|\d+[.)])[ \t]+|\|))")
+_WORDS = re.compile(r"\b[а-яa-z]{4,}\b")
+_NEGATED_PREDICATE = re.compile(
+    r"\bне\s+"
+    r"(?:(?:всегда|можно|может|могут|следует|нужно|обязательно|будет|будут)\s+)*"
+    r"(?P<predicate>[а-я]{4,})\b"
+)
+_NON_PREDICATES = {
+    "более", "выше", "дольше", "менее", "меньше", "ниже", "позднее", "раньше", "ранее", "только",
+}
+_QUANTITY_FILLER = re.compile(
+    r"^(?:более|возмож|друг|занима|менее|может|можно|нужн|около|период|потреб|"
+    r"пример|состав|срок|требу|хвати|через)",
+)
+_QUANTITY_RELATIONS = (
+    re.compile(r"\b(?:хран\w*|глубин\w*)\b"),
+    re.compile(r"\b(?:подключ\w*|внедр\w*|монтаж\w*)\b"),
+)
 
 
 def _normalized(text: str) -> str:
@@ -106,6 +125,36 @@ def _amounts(text: str) -> set[tuple[str, str, str, str]]:
     return amounts
 
 
+def _terms(text: str) -> set[str]:
+    return {word[:5] for word in _WORDS.findall(text) if not _QUANTITY_FILLER.match(word)}
+
+
+def _negated_terms(text: str) -> set[str]:
+    return {
+        match["predicate"][:5] for match in _NEGATED_PREDICATE.finditer(text)
+        if match["predicate"] not in _NON_PREDICATES
+    }
+
+
+def _contradicts_negation(answer: str, quote: str) -> bool:
+    answer_negated, quote_negated = _negated_terms(answer), _negated_terms(quote)
+    shared = _terms(answer) & _terms(quote)
+    reversed_terms = shared & (answer_negated ^ quote_negated)
+    return bool(reversed_terms and shared - reversed_terms)
+
+
+def _same_quantity_context(answer: str, quote: str) -> bool:
+    # Match what the number describes, excluding the quantity itself and generic
+    # expressions like "period" or "may take". Keep distinct operations apart.
+    answer_context = _NUMBER.sub(" ", answer)
+    quote_context = _NUMBER.sub(" ", quote)
+    answer_relations = {pattern for pattern in _QUANTITY_RELATIONS if pattern.search(answer_context)}
+    quote_relations = {pattern for pattern in _QUANTITY_RELATIONS if pattern.search(quote_context)}
+    if answer_relations and answer_relations != quote_relations:
+        return False
+    return bool(_terms(answer_context) & _terms(quote_context))
+
+
 def _valid_support(raw: object, evidence: dict[str, Evidence], used: list[str]) -> dict[str, str] | None:
     if not isinstance(raw, dict) or set(raw) != set(used):
         return None
@@ -113,14 +162,18 @@ def _valid_support(raw: object, evidence: dict[str, Evidence], used: list[str]) 
     for source_id, value in raw.items():
         if not isinstance(value, str) or not 12 <= len(value.strip()) <= 2_000:
             return None
-        article = unicodedata.normalize("NFKC", evidence[source_id].text).casefold()
-        # Require a full sentence or line so the quote cannot drop a nearby negation.
+        article = _SOFT_LINE_BREAK.sub(" ", unicodedata.normalize("NFKC", evidence[source_id].text).casefold())
+        # A Markdown soft wrap does not end a clause. A quote after that wrap
+        # could otherwise omit the negation or condition at the previous line.
         quote = r"\s+".join(re.escape(word) for word in _normalized(value).split())
-        if not re.search(
-            rf"(?:^|(?<=[.!?\n]))\s*{quote}(?:[.!?]|(?<=[.!?])|(?=[ \t]*(?:\n|$)))", article,
-        ):
+        match = re.search(
+            rf"(?:^|(?<=[.!?])(?=\s)|(?<=\n))\s*(?P<quote>{quote})"
+            rf"(?:[.!?](?=\s|$)|(?<=[.!?])(?=\s|$)|(?=[ \t]*(?:\n|$)))",
+            article,
+        )
+        if match is None:
             return None
-        support[source_id] = value
+        support[source_id] = match["quote"]
     return support
 
 
@@ -164,7 +217,9 @@ def read_reply(raw: str, evidence: tuple[Evidence, ...], *, client_facts: dict[s
     sentences = re.split(r"(?<=[.!?])\s+|\n+|[,;]\s+(?:но|однако|также)\s+", text)
     normalized_text = _normalized(text)
     proof = "\n".join(support.values())
-    proven_amounts = _amounts(proof)
+    proof_clauses = [
+        (part, _amounts(part)) for part in _CLAUSE.split(proof.casefold().replace("ё", "е")) if part
+    ]
     scoped_amounts = []
     for part in re.split(r"(?<=[.!?])\s+|\n+", proof):
         if scope := _LOCAL_SCOPE.search(part):
@@ -177,12 +232,15 @@ def read_reply(raw: str, evidence: tuple[Evidence, ...], *, client_facts: dict[s
         assertion = re.sub(r"\bне\s+(?:гарантиру\w*|обеща\w*)", "", sentence, flags=re.I)
         if _PROMISE.search(assertion) or _OREM_ASSURANCE.search(assertion):
             return fallback
-        provided_amounts = proven_amounts
-        if _CLIENT_REPORT.match(sentence) and not commerce:
-            provided_amounts = proven_amounts | stated_amounts
         amounts = _amounts(sentence)
-        if amounts - provided_amounts:
-            return fallback
+        client_amounts = stated_amounts if _CLIENT_REPORT.match(sentence) and not commerce else set()
+        for statement in _CLAUSE.split(sentence.casefold().replace("ё", "е")):
+            if any(_contradicts_negation(statement, quote) for quote, _ in proof_clauses):
+                return fallback
+            for amount in _amounts(statement) - client_amounts:
+                if not any(amount in quoted and _same_quantity_context(statement, quote)
+                           for quote, quoted in proof_clauses):
+                    return fallback
         if any(amounts & restricted and scope not in normalized_text
                for restricted, scope in scoped_amounts):
             return fallback
