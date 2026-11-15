@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZipFile
 
 import httpx
@@ -9,7 +10,24 @@ import httpx
 from consultation import Turn
 from knowledge_base import KnowledgeBase
 from organizer_api import APIConfig, OrganizerClient
-from rag_consultation import RagConsultant
+from rag_consultation import RagConsultant, configured_top_k
+
+
+class RetrievalConfigurationTests(unittest.TestCase):
+    def test_top_k_range_matches_the_organizer_sample(self):
+        for value in (1, 30):
+            with self.subTest(value=value), patch.dict("os.environ", {"TOP_K": str(value)}):
+                self.assertEqual(configured_top_k(), value)
+
+    def test_top_k_rejects_values_outside_the_organizer_range(self):
+        for value in ("0", "31", "2.5"):
+            with self.subTest(value=value), patch.dict("os.environ", {"TOP_K": value}):
+                with self.assertRaisesRegex(ValueError, "от 1 до 30"):
+                    configured_top_k()
+
+    def test_top_k_defaults_to_five(self):
+        with patch.dict("os.environ", {"TOP_K": ""}):
+            self.assertEqual(configured_top_k(), 5)
 
 
 class RagConsultationTests(unittest.IsolatedAsyncioTestCase):

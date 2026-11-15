@@ -45,11 +45,11 @@ evidence_ids — список идентификаторов материало�
 def configured_top_k() -> int:
     try:
         limit = int(os.environ.get("TOP_K") or 5)
-        if 1 <= limit <= 20:
+        if 1 <= limit <= 30:
             return limit
     except ValueError:
         pass
-    raise ValueError("TOP_K должен быть целым числом от 1 до 20.") from None
+    raise ValueError("TOP_K должен быть целым числом от 1 до 30.") from None
 
 
 class RagConsultant:

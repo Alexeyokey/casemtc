@@ -14,7 +14,7 @@ python3 -B scripts/build_submission.py --output /tmp/energytool-submission.zip
 
 ## Запустить на настроенном прокси
 
-Платформа передаёт `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` или их алиасы. Локально их задаёт пользователь. `TOP_K` по умолчанию равен 5. Установите зависимости из `requirements.txt` в своё окружение. Затем из рабочего каталога, куда должен быть записан `submission.csv`, выполните:
+Платформа передаёт `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` или их алиасы. Локально их задаёт пользователь. `TOP_K` принимает целое число от 1 до 30, по умолчанию — 5. Установите зависимости из `requirements.txt` в своё окружение. Затем из рабочего каталога, куда должен быть записан `submission.csv`, выполните:
 
 ```sh
 DATA_DIR=/path/to/organizer-input python3 -B /path/to/casemtc/solution.py

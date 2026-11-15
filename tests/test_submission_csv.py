@@ -7,15 +7,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZipFile
 
 import httpx
 
-from consultation import parse_csv_history
-from knowledge_base import KnowledgeBase
 from organizer_api import APIConfig, OrganizerClient
-from rag_consultation import RagConsultant
-from solution import SubmissionError, run_submission
+from solution import QUESTION_FALLBACK, SubmissionError, run_platform_submission, run_submission
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "solution.py"
@@ -117,7 +115,7 @@ class SubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.output_path.read_bytes(), previous)
         self.assertEqual(set(self.root.iterdir()), {self.input_path, self.output_path})
 
-    async def test_platform_adapter_isolates_history_and_reports_proxy_failure(self):
+    async def test_platform_adapter_keeps_rows_when_proxy_fails_on_one_question(self):
         archive = self.root / "knowledge-base.zip"
         with ZipFile(archive, "w") as package:
             package.writestr("meters.md", "# Счётчики\n\nСчётчики проверяют перед подключением.\n")
@@ -125,9 +123,8 @@ class SubmissionTests(unittest.IsolatedAsyncioTestCase):
             ("007", "Пользователь: Счётчики на объекте Кедр.\n"
                     "Ассистент: Что проверить?\nПользователь: Как подключить счётчики?"),
             ("02", "Какие счётчики подходят?"),
+            ("11", "Как проверить счётчики?"),
         ], encoding="utf-8-sig")
-        previous = b"id,answer\r\nold,previous\r\n"
-        self.output_path.write_bytes(previous)
         histories = []
 
         def proxy(request):
@@ -147,21 +144,72 @@ class SubmissionTests(unittest.IsolatedAsyncioTestCase):
             }]})
 
         config = APIConfig("https://fixture.invalid/v1", "synthetic", "synthetic-model", max_retries=0)
-        async with OrganizerClient(config, transport=httpx.MockTransport(proxy)) as client:
-            engine = RagConsultant(KnowledgeBase.from_zip(archive), client.chat)
+        client = OrganizerClient(config, transport=httpx.MockTransport(proxy))
+        with patch.object(APIConfig, "from_env", return_value=config), \
+                patch("organizer_api.OrganizerClient", return_value=client), \
+                self.assertLogs("solution", level="WARNING") as logs:
+            count = await run_platform_submission(self.root, output_path=self.output_path)
 
-            async def answer_question(question):
-                return (await engine.consult(parse_csv_history(question))).text
-
-            with self.assertRaises(SubmissionError) as caught:
-                await self.run_csv(answer_question)
-
+        self.assertEqual(count, 3)
         self.assertEqual([turn["role"] for turn in histories[0]], ["user", "assistant", "user"])
         self.assertEqual(histories[1], [{"role": "user", "text": "Какие счётчики подходят?"}])
-        self.assertIn("№2", str(caught.exception))
-        self.assertNotIn("synthetic-private-proxy-error", str(caught.exception))
-        self.assertEqual(self.output_path.read_bytes(), previous)
+        self.assertEqual(histories[2], [{"role": "user", "text": "Как проверить счётчики?"}])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("№2", logs.output[0])
+        self.assertNotIn("synthetic-private-proxy-error", logs.output[0])
+        self.assertNotIn("Какие счётчики", logs.output[0])
+        with self.output_path.open(encoding="utf-8", newline="") as target:
+            self.assertEqual(list(csv.reader(target)), [
+                ["id", "answer"],
+                ["007", "Начните с проверки приборов."],
+                ["02", QUESTION_FALLBACK],
+                ["11", "Начните с проверки приборов."],
+            ])
         self.assertEqual(set(self.root.iterdir()), {archive, self.input_path, self.output_path})
+
+    async def test_recovery_substitutes_invalid_answers_and_preserves_order(self):
+        answers = {"blank": " \n", "nontext": None, "long": "я" * 10_001,
+                   "unencodable": "\ud800", "valid": "Готово"}
+        self.write_questions([(question, question) for question in answers])
+
+        async def answer(question):
+            return answers[question]
+
+        with self.assertLogs("solution", level="WARNING") as logs:
+            count = await run_submission(
+                self.root, answer, output_path=self.output_path, recover_question_errors=True,
+            )
+
+        self.assertEqual(count, 5)
+        self.assertEqual(len(logs.output), 4)
+        with self.output_path.open(encoding="utf-8", newline="") as target:
+            self.assertEqual(list(csv.reader(target)), [
+                ["id", "answer"],
+                ["blank", QUESTION_FALLBACK],
+                ["nontext", QUESTION_FALLBACK],
+                ["long", QUESTION_FALLBACK],
+                ["unencodable", QUESTION_FALLBACK],
+                ["valid", "Готово"],
+            ])
+
+    async def test_recovery_preserves_previous_output_when_all_questions_fail(self):
+        self.write_questions([("01", "first"), ("02", "second")])
+        previous = b"id,answer\r\nold,previous\r\n"
+        self.output_path.write_bytes(previous)
+
+        async def answer(_question):
+            raise RuntimeError("synthetic-private-payload")
+
+        with self.assertLogs("solution", level="WARNING") as logs:
+            with self.assertRaisesRegex(SubmissionError, "ни одного ответа"):
+                await run_submission(
+                    self.root, answer, output_path=self.output_path, recover_question_errors=True,
+                )
+
+        self.assertEqual(len(logs.output), 2)
+        self.assertNotIn("synthetic-private-payload", "\n".join(logs.output))
+        self.assertEqual(self.output_path.read_bytes(), previous)
+        self.assertEqual(set(self.root.iterdir()), {self.input_path, self.output_path})
 
     async def test_cancellation_does_not_publish_partial_csv(self):
         self.write_questions([("1", "first"), ("2", "second")])

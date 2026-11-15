@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import csv
+import logging
 import os
 import sys
 import time
@@ -12,7 +13,9 @@ from tempfile import NamedTemporaryFile
 
 
 MAX_ANSWER_LENGTH = 10_000
+QUESTION_FALLBACK = "Не удалось получить ответ на этот вопрос. Повторите попытку позже."
 AnswerQuestion = Callable[[str], Awaitable[str]]
+logger = logging.getLogger(__name__)
 
 
 class SubmissionError(Exception):
@@ -48,15 +51,36 @@ def read_questions(path: Path) -> list[tuple[str, str]]:
     return rows
 
 
+async def _checked_answer(answer_question: AnswerQuestion, question: str, index: int) -> str:
+    try:
+        answer = await answer_question(question)
+    except Exception as error:
+        raise SubmissionError(
+            f"Обработчик завершился ошибкой на вопросе №{index} ({type(error).__name__})."
+        ) from error
+
+    if not isinstance(answer, str) or not answer.strip():
+        raise SubmissionError(f"Пустой или нетекстовый ответ на вопрос №{index}.")
+    if len(answer) > MAX_ANSWER_LENGTH:
+        raise SubmissionError(f"Ответ на вопрос №{index} длиннее 10 000 символов.")
+    try:
+        answer.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise SubmissionError(f"Ответ на вопрос №{index} нельзя записать в UTF-8.") from error
+    return answer
+
+
 async def run_submission(
     data_dir: Path,
     answer_question: AnswerQuestion,
     *,
     output_path: Path = Path("submission.csv"),
+    recover_question_errors: bool = False,
 ) -> int:
-    """Call the handler once per question with the original cell contents."""
+    """Call the handler with each original cell and publish the finished CSV atomically."""
     rows = read_questions(data_dir / "questions.csv")
     temporary_path = None
+    failed_questions = 0
     try:
         with NamedTemporaryFile(
             mode="w", encoding="utf-8", newline="", dir=output_path.parent, delete=False,
@@ -66,19 +90,17 @@ async def run_submission(
             writer.writerow(("id", "answer"))
             for index, (question_id, question) in enumerate(rows, start=1):
                 try:
-                    answer = await answer_question(question)
-                except Exception as error:
-                    raise SubmissionError(
-                        f"Обработчик завершился ошибкой на вопросе №{index} "
-                        f"({type(error).__name__})."
-                    ) from error
-
-                if not isinstance(answer, str) or not answer.strip():
-                    raise SubmissionError(f"Пустой или нетекстовый ответ на вопрос №{index}.")
-                if len(answer) > MAX_ANSWER_LENGTH:
-                    raise SubmissionError(f"Ответ на вопрос №{index} длиннее 10 000 символов.")
+                    answer = await _checked_answer(answer_question, question, index)
+                except SubmissionError as error:
+                    if not recover_question_errors:
+                        raise
+                    logger.warning("%s", error)
+                    failed_questions += 1
+                    answer = QUESTION_FALLBACK
                 writer.writerow((question_id, answer))
 
+        if rows and failed_questions == len(rows):
+            raise SubmissionError("Не удалось получить ни одного ответа. Файл submission.csv не обновлён.")
         os.replace(temporary_path, output_path)
     except (OSError, UnicodeError, csv.Error) as error:
         raise SubmissionError("Не удалось записать submission.csv в UTF-8.") from error
@@ -92,7 +114,7 @@ async def demo_answer(_question: str) -> str:
     return "Синтетический ответ для проверки формата CSV."
 
 
-async def run_platform_submission(data_dir: Path) -> int:
+async def run_platform_submission(data_dir: Path, *, output_path: Path = Path("submission.csv")) -> int:
     from consultation import parse_csv_history
     from knowledge_base import KnowledgeBase, KnowledgeBaseError
     from organizer_api import APIConfig, ConfigurationError, OrganizerClient
@@ -118,7 +140,9 @@ async def run_platform_submission(data_dir: Path) -> int:
         async def answer_question(question: str) -> str:
             return (await consultant.consult(parse_csv_history(question))).text
 
-        return await run_submission(data_dir, answer_question)
+        return await run_submission(
+            data_dir, answer_question, output_path=output_path, recover_question_errors=True,
+        )
 
 
 def main(
