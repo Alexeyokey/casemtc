@@ -82,7 +82,8 @@ class StubEngine:
             ctx.contact.phone = phone
         if _CALLBACK.search(msg):
             ctx.callback_requested = True
-        if _REFUSE.search(msg):
+        refused_now = bool(_REFUSE.search(msg))
+        if refused_now:
             ctx.contact_status = ContactStatus.refused
             ctx.callback_requested = False
         elif ctx.contact.phone:
@@ -101,7 +102,9 @@ class StubEngine:
             raise RuntimeError("synthetic generation failure")
         clarifying = None
         used: list[str] = []
-        if ctx.contact_status == ContactStatus.refused:
+        if refused_now:
+            # Подтверждаем отказ только в той реплике, где он прозвучал;
+            # дальше консультация идёт обычным путём (регрессия из ручной приёмки S5).
             action = ActionType.answer
             answer = ("Хорошо, контакты не обязательны — продолжим консультацию. "
                       "Расскажите, какую задачу хотите решить.")

@@ -108,3 +108,15 @@ def test_cannot_access_foreign_session_anywhere(api):
         r = getattr(api, method)(path, t2)
         assert r.status_code == 404, path
         assert "+7999" not in r.text
+
+
+def test_consultation_answers_normally_after_refusal(api):
+    """S5 B6: после отказа от контактов следующие вопросы получают обычный ответ,
+    а не повтор подтверждения отказа."""
+    sid, tok = api.new_session()
+    api.say(sid, tok, "Свяжите со специалистом")
+    refusal = api.say(sid, tok, "Не хочу оставлять телефон, просто ответьте")
+    assert "контакты не обязательны" in refusal["answer"]
+    nxt = api.say(sid, tok, "Расскажите про отчёты по показаниям счётчиков")
+    assert "контакты не обязательны" not in nxt["answer"]
+    assert nxt["action"] == "answer" and nxt["lead"]["contact_refused"] is True
