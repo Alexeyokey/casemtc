@@ -1,0 +1,73 @@
+.wrap {
+  padding: clamp(var(--s6), 8vh, 96px) 0 var(--s6);
+  animation: rise 360ms var(--ease-out) both;
+}
+
+.title {
+  margin: 0 0 var(--s4);
+  font-size: clamp(var(--fs-2xl), 5.5vw, var(--fs-3xl));
+  line-height: var(--lh-tight);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  max-width: 16ch;
+  text-wrap: balance;
+}
+
+.lead {
+  margin: 0 0 var(--s6);
+  max-width: 56ch;
+  color: var(--text-muted);
+  font-size: var(--fs-lg);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+
+/* Примеры — строки-кнопки с красной меткой слева: та же метка, что у ответов консультанта. */
+.suggestion {
+  width: 100%;
+  min-height: 52px;
+  padding: var(--s3) var(--s4) var(--s3) var(--s5);
+  text-align: left;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-card);
+  position: relative;
+  transition: border-color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
+}
+
+.suggestion::before {
+  content: "";
+  position: absolute;
+  left: var(--s3);
+  top: 50%;
+  width: 3px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.suggestion:hover:not(:disabled) {
+  border-color: var(--text);
+}
+
+.suggestion:active:not(:disabled) {
+  background: var(--surface);
+}
+
+.suggestion:disabled {
+  opacity: 0.5;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}

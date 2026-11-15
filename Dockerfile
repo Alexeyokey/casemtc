@@ -1,6 +1,14 @@
 FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
+# Веб-интерфейс (web/): собираем статикой, в итоговый образ попадает только dist/.
+FROM node:22.12.0-bookworm-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 FROM base AS dependencies
 COPY requirements.lock /tmp/requirements.lock
 RUN python -m venv /opt/venv \
@@ -21,6 +29,7 @@ COPY --from=dependencies /opt/venv /opt/venv
 COPY consultation.py consultation_context.py consultation_grounding.py knowledge_base.py organizer_api.py rag_consultation.py solution.py requirements.txt ./
 COPY backend ./backend
 COPY core ./core
+COPY --from=web /web/dist ./web/dist
 COPY scripts/build_submission.py ./scripts/build_submission.py
 
 USER 10001:10001

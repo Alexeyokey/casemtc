@@ -13,6 +13,12 @@
 !backend/**
 !core/
 !core/**
+!web/
+!web/**
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
 **/__pycache__/
 **/*.pyc
 !scripts/

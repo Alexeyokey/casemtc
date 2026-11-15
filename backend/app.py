@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import os
 import json
 import logging
 from pathlib import Path
@@ -17,6 +18,7 @@ from fastapi import Body, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from core.contracts import CONTRACT_VERSION
 from core.engine import DEFAULT_ENGINE, ConsultationEngine, load_engine
@@ -43,6 +45,9 @@ from .settings import Settings
 
 log = logging.getLogger("casemtc")
 DEMO_DIR = Path(__file__).with_name("demo")
+# Сборка web/ (React). Если её нет (локальный запуск без npm), "/" отдаёт демо-чат.
+def _web_dist() -> Path:
+    return Path(os.getenv("CASEMTC_WEB_DIST") or Path(__file__).resolve().parent.parent / "web" / "dist")
 ERRORS = {409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse},
           502: {"model": ErrorResponse}}
 
@@ -94,7 +99,18 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
             raise ApiError(403, "archive_forbidden", "Неверный X-Archive-Token")
 
     # ------------------------------------------------------------- health
+    web_dist = _web_dist()
+    web_index = web_dist / "index.html"
+    if (web_dist / "assets").is_dir():
+        # Файлы с хешем в имени можно кешировать долго; index.html — никогда.
+        app.mount("/assets", _ImmutableStatic(directory=web_dist / "assets"), name="web-assets")
+
     @app.get("/", include_in_schema=False)
+    def web_page():
+        page = web_index if web_index.is_file() else DEMO_DIR / "index.html"
+        return FileResponse(page, headers={"Cache-Control": "no-store"})
+
+    @app.get("/demo", include_in_schema=False)
     def demo_page():
         return FileResponse(DEMO_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
@@ -269,6 +285,14 @@ def create_app(settings: Optional[Settings] = None, engine: Optional[Consultatio
                                  media_type="text/markdown; charset=utf-8")
 
     return app
+
+
+class _ImmutableStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def _sse(event: str, data: dict) -> str:
