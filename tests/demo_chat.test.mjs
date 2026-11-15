@@ -51,7 +51,7 @@ async function openChat({handle, nextLead = null}) {
   const elements = Object.fromEntries([...page.matchAll(/\bid="([^"]+)"/g)]
     .map(([, id]) => [id, new Element(id)]));
   const {contacts, phone, company} = elements;
-  contacts.elements = [phone, company, new Element("contacts-submit")];
+  contacts.elements = [phone, elements["full-name"], company, new Element("contacts-submit")];
   const requests = [];
   runInNewContext(script, {
     document: {querySelectorAll: () => Object.values(elements)},
@@ -99,10 +99,28 @@ test("a contacts response from the previous dialog is ignored after starting a n
 
   assert.equal(elements.lead.hidden, true);
   assert.equal(elements.phone.value, "");
+  assert.equal(elements["full-name"].value, "");
   assert.equal(elements.company.value, "");
   assert.equal(elements.save.hidden, true);
   assert.equal(elements.send.disabled, false);
   assert.equal(elements.status.textContent, "");
+});
+
+test("the optional name can be entered and cleared without removing the phone", async () => {
+  const {elements, requests} = await openChat({handle: request => {
+    if (!request.path.endsWith("/lead/contacts")) return null;
+    assert.equal(request.body.phone, "+79990000031");
+    return response({...readyLead(), contact: {...readyLead().contact, full_name: request.body.full_name}});
+  }});
+  elements["full-name"].value = "Вера Тестова";
+  await elements.contacts.fire("submit");
+  assert.equal(elements["full-name"].value, "Вера Тестова");
+  elements["full-name"].value = "";
+  await elements.contacts.fire("submit");
+  assert.equal(elements["full-name"].value, "");
+  assert.equal(elements.phone.value, "+79990000031");
+  assert.deepEqual(requests.filter(request => request.path.endsWith("/lead/contacts"))
+    .map(request => request.body.full_name), ["Вера Тестова", null]);
 });
 
 test("retry reuses the lead key within one dialog and a new dialog creates its own key", async () => {
