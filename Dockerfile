@@ -18,7 +18,7 @@ RUN groupadd --gid 10001 energytool \
     && useradd --uid 10001 --gid 10001 --no-create-home energytool \
     && install -d -o 10001 -g 10001 /var/lib/energytool
 COPY --from=dependencies /opt/venv /opt/venv
-COPY consultation.py knowledge_base.py organizer_api.py rag_consultation.py solution.py requirements.txt ./
+COPY consultation.py consultation_context.py consultation_grounding.py knowledge_base.py organizer_api.py rag_consultation.py solution.py requirements.txt ./
 COPY backend ./backend
 COPY core ./core
 COPY scripts/build_submission.py ./scripts/build_submission.py

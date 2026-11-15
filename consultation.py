@@ -6,7 +6,7 @@ from typing import Literal
 
 
 Role = Literal["user", "assistant"]
-Action = Literal["answer", "clarify", "offer_contact"]
+Action = Literal["answer", "clarify", "offer_contact", "escalate", "out_of_scope"]
 ROLE_PREFIX = re.compile(r"^(Пользователь|Ассистент):[ \t]*", re.MULTILINE)
 
 

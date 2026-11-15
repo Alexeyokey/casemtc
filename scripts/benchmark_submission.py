@@ -54,14 +54,14 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 raise ValueError("invalid request size")
             request = json.loads(self.rfile.read(size))
             payload = json.loads(request["messages"][-1]["content"])
-            source = payload["evidence"][0]["id"]
+            source = payload["evidence"][0]
         except (KeyError, IndexError, TypeError, ValueError):
             self.send_error(400)
             return
 
         result = {
             "text": SYNTHETIC_ANSWER, "action": "answer", "summary": None,
-            "evidence_ids": [source],
+            "evidence_ids": [source["id"]], "support": {source["id"]: source["text"]},
         }
         response = json.dumps({"choices": [{
             "finish_reason": "stop", "message": {"content": json.dumps(result)},
@@ -142,7 +142,7 @@ async def measure_warm(rounds: int) -> dict:
     from consultation import parse_csv_history
     from knowledge_base import KnowledgeBase
     from organizer_api import APIConfig, OrganizerClient
-    from rag_consultation import NO_EVIDENCE, RagConsultant
+    from rag_consultation import OUT_OF_SCOPE, RagConsultant
 
     started = time.perf_counter()
     knowledge = KnowledgeBase.from_zip(Path(os.environ["DATA_DIR"]) / "knowledge-base.zip")
@@ -156,7 +156,7 @@ async def measure_warm(rounds: int) -> dict:
                 started = time.perf_counter()
                 reply = await consultant.consult(parse_csv_history(question))
                 samples.append(time.perf_counter() - started)
-                expected = NO_EVIDENCE if key == "003" else SYNTHETIC_ANSWER
+                expected = OUT_OF_SCOPE if key == "003" else SYNTHETIC_ANSWER
                 if reply.text != expected:
                     raise BenchmarkError(f"Прогретый обработчик дал неожиданный ответ для {key}.")
 
