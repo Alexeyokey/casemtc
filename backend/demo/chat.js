@@ -69,6 +69,7 @@ function renderLead(next) {
   ui.lead.hidden = !lead || lead.status === "none";
   if (ui.lead.hidden) {
     ui.phone.value = "";
+    ui["full-name"].value = "";
     ui.company.value = "";
     ui["lead-status"].textContent = "";
     ui["lead-preview"].textContent = "";
@@ -77,6 +78,7 @@ function renderLead(next) {
   }
   ui["lead-status"].textContent = lead.status_text;
   ui.phone.value = lead.contact.phone || "";
+  ui["full-name"].value = lead.contact.full_name || "";
   ui.company.value = lead.contact.company || "";
   const summary = lead.summary;
   ui["lead-preview"].textContent = summary ? [summary.task, ...summary.known_facts,
@@ -255,7 +257,11 @@ async function updateLead(path, options) {
 
 ui.contacts.addEventListener("submit", event => {
   event.preventDefault();
-  updateLead("contacts", {method: "PUT", body: {phone: ui.phone.value, company: ui.company.value || null}});
+  return updateLead("contacts", {method: "PUT", body: {
+    phone: ui.phone.value,
+    full_name: ui["full-name"].value || null,
+    company: ui.company.value || null,
+  }});
 });
 ui.contacts.addEventListener("input", () => { ui.save.hidden = true; });
 ui.save.addEventListener("click", () => {

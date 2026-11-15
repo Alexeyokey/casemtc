@@ -23,6 +23,7 @@ from .db import Database, dumps, loads, now_iso
 from .errors import ApiError
 
 OPTIONAL_FIELDS = {"full_name": "ФИО", "company": "Компания", "region": "Регион"}
+_CONTACT_SUMMARY_LABELS = {label.casefold() for label in OPTIONAL_FIELDS.values()} | {"фио контактного лица"}
 
 
 class LeadService:
@@ -68,12 +69,18 @@ class LeadService:
             )
 
     def _update_draft(self, conn, session_id: str, ctx: ClientContext, summary: Optional[LeadSummary], *,
-                      context_changed: bool = False) -> None:
+                      context_changed: bool = False, contacts_changed: bool = False) -> None:
         self._ensure_row(conn, session_id)
         row = self._row(session_id)
         summary_json = summary.model_dump_json() if summary else row["draft_summary_json"]
         if ctx.contact_status == ContactStatus.refused or (context_changed and summary is None):
             summary_json = None
+        elif contacts_changed and summary_json:
+            draft = LeadSummary.model_validate_json(summary_json)
+            unknowns = [label for label in draft.unknowns
+                        if label.strip().casefold() not in _CONTACT_SUMMARY_LABELS]
+            unknowns.extend(label for field, label in OPTIONAL_FIELDS.items() if not getattr(ctx.contact, field))
+            summary_json = draft.model_copy(update={"unknowns": unknowns}).model_dump_json()
         conn.execute("UPDATE leads SET draft_summary_json=?, updated_at=? WHERE session_id=?",
                      (summary_json, now_iso(), session_id))
         if row["status"] == "draft":
@@ -205,7 +212,8 @@ class LeadService:
             fields["phone"] = normalized
         with self.db.tx() as conn:
             ctx = self._ctx(session_id)
-            data = ctx.contact.model_dump()
+            previous_contact = ctx.contact
+            data = previous_contact.model_dump()
             for k in ("full_name", "phone", "company", "region"):
                 if k in fields:
                     data[k] = fields[k]
@@ -219,7 +227,7 @@ class LeadService:
             elif ctx.contact_status != ContactStatus.refused:
                 ctx.contact_status = ContactStatus.requested
             self._save_ctx(conn, session_id, ctx)
-            self._update_draft(conn, session_id, ctx, None)
+            self._update_draft(conn, session_id, ctx, None, contacts_changed=ctx.contact != previous_contact)
             return self.view(session_id)
 
     def refuse(self, session_id: str) -> LeadView:
