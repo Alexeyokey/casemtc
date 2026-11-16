@@ -120,3 +120,24 @@ def test_consultation_answers_normally_after_refusal(api):
     nxt = api.say(sid, tok, "Расскажите про отчёты по показаниям счётчиков")
     assert "контакты не обязательны" not in nxt["answer"]
     assert nxt["action"] == "answer" and nxt["lead"]["contact_refused"] is True
+
+
+
+def test_consultation_reopens_callback_only_after_explicit_request(api):
+    sid, tok = api.new_session()
+    api.say(sid, tok, "Свяжите со специалистом")
+    api.say(sid, tok, "Не хочу оставлять телефон")
+
+    question = api.say(sid, tok, "Какие отчёты по счётчикам может увидеть менеджер?")
+    assert question["action"] == "answer"
+    assert question["lead"]["contact_refused"] is True
+    assert question["lead"]["callback_requested"] is False
+
+    callback = api.say(sid, tok, "Передумал, свяжите меня со специалистом")
+    assert callback["action"] == "collect_contacts"
+    assert callback["lead"]["contact_refused"] is False
+    assert callback["lead"]["callback_requested"] is True
+
+    contact = api.say(sid, tok, "+7 999 000-00-21")
+    assert contact["action"] == "lead_ready"
+    assert contact["lead"]["status"] == "ready"

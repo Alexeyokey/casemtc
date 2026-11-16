@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 import time
 
+from consultation_context import requests_callback
+
 from .contracts import (
     ActionType,
     ClientContext,
@@ -73,23 +75,27 @@ class StubEngine:
             ctx.topic = msg[:200]
         if m := _OBJECTS.search(msg):
             ctx.facts["масштаб"] = f"{m.group(1)} {m.group(2)}"
-        if m := _NAME.search(msg):
-            ctx.contact.full_name = m.group(1)
-        if m := _COMPANY.search(msg):
-            ctx.contact.company = m.group(1).strip()
-        phone = extract_phone(msg)
-        if phone:
-            ctx.contact.phone = phone
-        if _CALLBACK.search(msg):
-            ctx.callback_requested = True
         refused_now = bool(_REFUSE.search(msg))
+        refused_before = ctx.contact_status == ContactStatus.refused
         if refused_now:
             ctx.contact_status = ContactStatus.refused
             ctx.callback_requested = False
-        elif ctx.contact.phone:
-            ctx.contact_status = ContactStatus.phone_valid
-        elif ctx.contact.full_name or ctx.contact.company:
-            ctx.contact_status = ContactStatus.partial
+        elif not refused_before or requests_callback(msg):
+            if m := _NAME.search(msg):
+                ctx.contact.full_name = m.group(1)
+            if m := _COMPANY.search(msg):
+                ctx.contact.company = m.group(1).strip()
+            if phone := extract_phone(msg):
+                ctx.contact.phone = phone
+            if refused_before:
+                ctx.callback_requested = True
+                ctx.contact_status = ContactStatus.requested
+            elif _CALLBACK.search(msg):
+                ctx.callback_requested = True
+            if ctx.contact.phone:
+                ctx.contact_status = ContactStatus.phone_valid
+            elif ctx.contact.full_name or ctx.contact.company:
+                ctx.contact_status = ContactStatus.partial
 
         # --- поиск (синтетический) ---
         t_r = time.perf_counter()
